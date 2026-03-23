@@ -132,11 +132,11 @@ jobs:
 
       - name: Build (native)
         if: matrix.target != 'aarch64-unknown-linux-musl'
-        run: cargo build --release --target ${{ matrix.target }} --bin keyva --bin keyva-cli --bin keyva-auth
+        run: cargo build --release --target ${{ matrix.target }} -p keyva -p keyva-auth -p keyva-cli
 
       - name: Build (cross)
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: cross build --release --target ${{ matrix.target }} --bin keyva --bin keyva-cli --bin keyva-auth
+        run: cross build --release --target ${{ matrix.target }} -p keyva -p keyva-auth -p keyva-cli
 
       - name: Package
         run: |

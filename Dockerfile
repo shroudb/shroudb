@@ -11,10 +11,11 @@ COPY commons/ /commons/
 # Copy keyva source
 COPY keyva/ /build/
 
+# Ensure musl target is available (rust-toolchain.toml may trigger toolchain switch)
+RUN rustup target add x86_64-unknown-linux-musl
+
 RUN cargo build --release --target x86_64-unknown-linux-musl \
-    --bin keyva \
-    --bin keyva-auth \
-    --bin keyva-cli
+    -p keyva -p keyva-auth -p keyva-cli
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
