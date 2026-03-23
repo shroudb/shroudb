@@ -1,0 +1,42 @@
+replicaCount: 1
+
+image:
+  repository: keyva
+  pullPolicy: IfNotPresent
+  tag: ""
+
+service:
+  type: ClusterIP
+  resp3Port: 6399
+  restPort: 8080
+
+resources:
+  limits:
+    cpu: "1"
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+
+# Set via --set or external secret
+masterKey:
+  existingSecret: ""
+  secretKey: "master-key"
+
+config: |
+  [server]
+  bind = "0.0.0.0:6399"
+  rest_bind = "0.0.0.0:8080"
+
+  [storage]
+  data_dir = "/data"
+
+  [keyspaces.tokens]
+  type = "jwt"
+  algorithm = "ES256"
+  default_ttl = "15m"

@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+*.pdb
+*.swp
+*.swo
+*~
+.DS_Store
+.env
+.idea/
+/generated/
+data/
+auth-data/

@@ -1,0 +1,18 @@
+[package]
+name = "keyva-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "keyva-cli"
+path = "src/main.rs"
+
+[dependencies]
+keyva-client = { path = "../keyva-client" }
+clap.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+rustyline.workspace = true
+serde_json.workspace = true

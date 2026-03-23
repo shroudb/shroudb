@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-keyva
+  labels:
+    app.kubernetes.io/name: keyva
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.resp3Port }}
+      targetPort: resp3
+      protocol: TCP
+      name: resp3
+    - port: {{ .Values.service.restPort }}
+      targetPort: rest
+      protocol: TCP
+      name: rest
+  selector:
+    app.kubernetes.io/name: keyva
+    app.kubernetes.io/instance: {{ .Release.Name }}

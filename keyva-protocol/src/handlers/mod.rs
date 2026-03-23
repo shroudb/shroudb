@@ -1,0 +1,16 @@
+pub mod config;
+pub mod health;
+pub mod inspect;
+pub mod issue;
+pub mod jwks;
+pub mod keys;
+pub mod keystate;
+pub mod password;
+pub mod refresh;
+pub mod revoke;
+pub mod rotate;
+pub mod schema;
+pub mod subscribe;
+pub mod suspend;
+pub mod update;
+pub mod verify;

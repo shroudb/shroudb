@@ -1,0 +1,20 @@
+[package]
+name = "keyva-rest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+keyva-core.workspace = true
+keyva-protocol.workspace = true
+keyva-storage.workspace = true
+
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+crc32fast.workspace = true

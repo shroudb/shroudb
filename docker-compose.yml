@@ -1,0 +1,42 @@
+services:
+  keyva:
+    build: .
+    ports:
+      - "6399:6399"
+      - "8080:8080"
+    environment:
+      - KEYVA_MASTER_KEY=${KEYVA_MASTER_KEY:?Set KEYVA_MASTER_KEY (64 hex chars)}
+      - RUST_LOG=info
+    volumes:
+      - keyva-data:/data
+      - ./config.example.toml:/config.toml:ro
+    command: ["--config", "/config.toml"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/keyva", "--help"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  keyva-auth:
+    build: .
+    entrypoint: ["/keyva-auth"]
+    ports:
+      - "4001:4001"
+    environment:
+      - KEYVA_MASTER_KEY=${KEYVA_MASTER_KEY:?Set KEYVA_MASTER_KEY (64 hex chars)}
+      - RUST_LOG=info
+    volumes:
+      - keyva-auth-data:/auth-data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/keyva-auth", "--help"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  keyva-data:
+  keyva-auth-data:

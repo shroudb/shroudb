@@ -1,0 +1,69 @@
+[workspace]
+resolver = "3"
+default-members = ["keyva-server"]
+members = [
+    "keyva-server",
+    "keyva-auth",
+    "keyva-protocol",
+    "keyva-rest",
+    "keyva-client",
+    "keyva-cli",
+    "keyva-codegen",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Internal crates
+keyva-protocol = { path = "keyva-protocol" }
+keyva-rest = { path = "keyva-rest" }
+keyva-client = { path = "keyva-client" }
+
+# Commons crates (keyva-io/commons)
+# Path deps for local development; switch to git/crates.io deps for releases.
+keyva-core = { path = "../commons/keyva-core" }
+keyva-crypto = { path = "../commons/keyva-crypto" }
+keyva-storage = { path = "../commons/keyva-storage" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+postcard = { version = "1", features = ["alloc"] }
+
+# Crypto
+ring = "0.17"
+
+# Networking
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+rustls = "0.23"
+rustls-native-certs = "0.8"
+rustls-pki-types = { version = "1", features = ["std"] }
+tokio-rustls = "0.26"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
+
+# Utilities
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dashmap = "6"
+bytes = "1"
+hex = "0.4"
+rustyline = { version = "17", features = ["derive"] }
+crc32fast = "1"
+uuid = { version = "1", features = ["v4"] }
+libc = "0.2"
+tower-http = { version = "0.6", features = ["cors"] }

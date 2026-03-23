@@ -1,0 +1,30 @@
+[package]
+name = "keyva-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tokio = { version = "1", features = ["rt", "io-util"] }
+keyva-protocol = { path = "../keyva-protocol" }
+keyva-storage = { path = "../keyva-storage" }
+toml = "1"
+
+[[bin]]
+name = "resp3_parser"
+path = "fuzz_targets/resp3_parser.rs"
+doc = false
+
+[[bin]]
+name = "wal_entry"
+path = "fuzz_targets/wal_entry.rs"
+doc = false
+
+[[bin]]
+name = "config_parser"
+path = "fuzz_targets/config_parser.rs"
+doc = false
