@@ -173,7 +173,12 @@ async fn main() -> anyhow::Result<()> {
     rl.set_helper(Some(helper));
 
     let history_path = dirs_home().join(".shroudb_history");
-    let _ = rl.load_history(&history_path);
+    if let Err(e) = rl.load_history(&history_path) {
+        // Not an error on first run (file doesn't exist yet).
+        if !matches!(e, ReadlineError::Io(_)) {
+            eprintln!("warning: could not load history: {e}");
+        }
+    }
 
     loop {
         match rl.readline("shroudb> ") {
@@ -225,7 +230,10 @@ fn print_output(resp: &Response, mode: OutputMode) {
         OutputMode::Human => resp.print(0),
         OutputMode::Json => {
             let json_val = resp.to_json();
-            println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+            match serde_json::to_string_pretty(&json_val) {
+                Ok(s) => println!("{s}"),
+                Err(e) => eprintln!("(JSON serialization error: {e})"),
+            }
         }
         OutputMode::Raw => {
             let raw = resp.to_raw();
@@ -240,21 +248,55 @@ fn dirs_home() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
-/// Split a line into words, respecting double-quoted strings.
+/// Split a line into words, respecting double-quoted and single-quoted strings.
+///
+/// Supports backslash escaping within double-quoted strings (`\"`, `\\`).
+/// Single-quoted strings are taken literally (no escape processing).
 fn shell_words(input: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
-    let mut in_quotes = false;
+    let mut chars = input.chars().peekable();
 
-    for ch in input.chars() {
-        match ch {
-            '"' => in_quotes = !in_quotes,
-            ' ' | '\t' if !in_quotes => {
-                if !current.is_empty() {
-                    words.push(std::mem::take(&mut current));
+    #[derive(PartialEq)]
+    enum State {
+        Normal,
+        DoubleQuote,
+        SingleQuote,
+    }
+
+    let mut state = State::Normal;
+
+    while let Some(ch) = chars.next() {
+        match state {
+            State::Normal => match ch {
+                '"' => state = State::DoubleQuote,
+                '\'' => state = State::SingleQuote,
+                ' ' | '\t' => {
+                    if !current.is_empty() {
+                        words.push(std::mem::take(&mut current));
+                    }
                 }
-            }
-            _ => current.push(ch),
+                _ => current.push(ch),
+            },
+            State::DoubleQuote => match ch {
+                '"' => state = State::Normal,
+                '\\' => {
+                    if let Some(&next) = chars.peek() {
+                        if next == '"' || next == '\\' {
+                            current.push(chars.next().unwrap());
+                        } else {
+                            current.push(ch);
+                        }
+                    } else {
+                        current.push(ch);
+                    }
+                }
+                _ => current.push(ch),
+            },
+            State::SingleQuote => match ch {
+                '\'' => state = State::Normal,
+                _ => current.push(ch),
+            },
         }
     }
     if !current.is_empty() {
@@ -269,7 +311,7 @@ fn print_help() {
 Commands:
 
   Credential Operations
-    ISSUE <keyspace> [CLAIMS <json>] [META <json>] [TTL <secs>]
+    ISSUE <keyspace> [CLAIMS <json>] [META <json>] [TTL <secs>] [IDEMPOTENCY_KEY <key>]
     VERIFY <keyspace> <token> [PAYLOAD <data>] [CHECKREV]
     REVOKE <keyspace> <id>
     REVOKE <keyspace> FAMILY <family_id>
@@ -284,7 +326,7 @@ Commands:
 
   Operational
     HEALTH [<keyspace>]
-    KEYS <keyspace> [COUNT <n>]
+    KEYS <keyspace> [CURSOR <cursor>] [PATTERN <glob>] [STATE <state>] [COUNT <n>]
     SUSPEND <keyspace> <credential_id>
     UNSUSPEND <keyspace> <credential_id>
     SCHEMA <keyspace>
