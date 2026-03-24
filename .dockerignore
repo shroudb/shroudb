@@ -1,0 +1,9 @@
+target/
+.git/
+.cargo/
+.github/
+*.md
+*.swp
+*.swo
+.DS_Store
+.env
