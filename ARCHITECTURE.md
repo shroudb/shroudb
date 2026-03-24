@@ -17,19 +17,14 @@ shroudb (binary)
 ├── shroudb-protocol     RESP3 codec, command parsing, dispatch, handlers, auth
 │   ├── resp3/         Wire format parser/serializer
 │   └── handlers/      One file per command (issue, verify, revoke, rotate, ...)
-├── shroudb-rest         Axum HTTP adapter (REST + JWKS + metrics endpoints)
-├── shroudb-grpc         Tonic gRPC adapter + Envoy ext_authz/ext_proc
 ├── shroudb-client       Typed async Rust client library (RESP3 over TCP/TLS)
-├── shroudb-cli          Interactive REPL (wraps shroudb-client, adds tab completion)
-└── shroudb-codegen      SDK client code generator — reads protocol.toml spec and generates typed client stubs for TypeScript, Go, Python, Ruby
+└── shroudb-cli          Interactive REPL (wraps shroudb-client, adds tab completion)
 ```
 
 ### Dependency Graph
 
 ```
 shroudb-core  <──  shroudb-crypto  <──  shroudb-storage  <──  shroudb-protocol  <──  shroudb (bin)
-                                                    │                    ├──  shroudb-rest
-                                                    │                    └──  shroudb-grpc
                                                     │
                                           shroudb-client  <──  shroudb-cli (bin)
 ```

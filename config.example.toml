@@ -18,12 +18,6 @@ bind = "0.0.0.0:6399"
 # Set to disable with: metrics_bind = false
 metrics_bind = "0.0.0.0:9090"
 
-# REST API (not yet implemented; accepted for forward-compatibility)
-# rest_bind = "0.0.0.0:8080"
-
-# gRPC (not yet implemented)
-# grpc_bind = "0.0.0.0:50051"
-
 [storage]
 data_dir = "./data"
 # WAL fsync mode: "per_write" | "batched" | "periodic"

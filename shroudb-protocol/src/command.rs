@@ -1,5 +1,5 @@
 /// Protocol-agnostic command representation.
-/// Produced by RESP3 parser, REST deserializer, or gRPC deserializer.
+/// Produced by the RESP3 parser (or any future protocol adapter).
 #[derive(Debug, Clone)]
 pub enum Command {
     // === Write commands ===
@@ -220,6 +220,246 @@ impl Command {
             | Command::PasswordImport { keyspace, .. } => Some(keyspace),
             Command::Health { keyspace, .. } => keyspace.as_deref(),
             _ => None,
+        }
+    }
+
+    /// Serialize this command to RESP3 wire arguments (array of strings).
+    ///
+    /// This is the inverse of `parse_command` — given a `Command` enum, produce
+    /// the string arguments that would be sent over the wire.
+    pub fn to_wire_args(&self) -> Vec<String> {
+        match self {
+            Command::Issue {
+                keyspace,
+                claims,
+                metadata,
+                ttl_secs,
+                idempotency_key,
+            } => {
+                let mut args = vec!["ISSUE".into(), keyspace.clone()];
+                if let Some(c) = claims {
+                    args.extend(["CLAIMS".into(), c.to_string()]);
+                }
+                if let Some(m) = metadata {
+                    args.extend(["META".into(), m.to_string()]);
+                }
+                if let Some(t) = ttl_secs {
+                    args.extend(["TTL".into(), t.to_string()]);
+                }
+                if let Some(k) = idempotency_key {
+                    args.extend(["IDEMPOTENCY_KEY".into(), k.clone()]);
+                }
+                args
+            }
+            Command::Verify {
+                keyspace,
+                token,
+                payload,
+                check_revoked,
+            } => {
+                let mut args = vec!["VERIFY".into(), keyspace.clone(), token.clone()];
+                if let Some(p) = payload {
+                    args.extend(["PAYLOAD".into(), p.clone()]);
+                }
+                if *check_revoked {
+                    args.push("CHECKREV".into());
+                }
+                args
+            }
+            Command::Revoke {
+                keyspace,
+                target,
+                ttl_secs,
+            } => {
+                let mut args = vec!["REVOKE".into(), keyspace.clone()];
+                match target {
+                    RevokeTarget::Single(id) => args.push(id.clone()),
+                    RevokeTarget::Family(fid) => args.extend(["FAMILY".into(), fid.clone()]),
+                    RevokeTarget::Bulk(ids) => {
+                        args.push("BULK".into());
+                        args.extend(ids.iter().cloned());
+                    }
+                }
+                if let Some(t) = ttl_secs {
+                    args.extend(["TTL".into(), t.to_string()]);
+                }
+                args
+            }
+            Command::Refresh { keyspace, token } => {
+                vec!["REFRESH".into(), keyspace.clone(), token.clone()]
+            }
+            Command::Update {
+                keyspace,
+                credential_id,
+                metadata,
+            } => {
+                vec![
+                    "UPDATE".into(),
+                    keyspace.clone(),
+                    credential_id.clone(),
+                    "META".into(),
+                    metadata.to_string(),
+                ]
+            }
+            Command::Inspect {
+                keyspace,
+                credential_id,
+            } => {
+                vec!["INSPECT".into(), keyspace.clone(), credential_id.clone()]
+            }
+            Command::Rotate {
+                keyspace,
+                force,
+                nowait,
+                dryrun,
+            } => {
+                let mut args = vec!["ROTATE".into(), keyspace.clone()];
+                if *force {
+                    args.push("FORCE".into());
+                }
+                if *nowait {
+                    args.push("NOWAIT".into());
+                }
+                if *dryrun {
+                    args.push("DRYRUN".into());
+                }
+                args
+            }
+            Command::Jwks { keyspace } => vec!["JWKS".into(), keyspace.clone()],
+            Command::KeyState { keyspace } => vec!["KEYSTATE".into(), keyspace.clone()],
+            Command::Health { keyspace } => {
+                let mut args = vec!["HEALTH".into()];
+                if let Some(ks) = keyspace {
+                    args.push(ks.clone());
+                }
+                args
+            }
+            Command::Keys {
+                keyspace,
+                cursor,
+                pattern,
+                state_filter,
+                count,
+            } => {
+                let mut args = vec!["KEYS".into(), keyspace.clone()];
+                if let Some(c) = cursor {
+                    args.extend(["CURSOR".into(), c.clone()]);
+                }
+                if let Some(p) = pattern {
+                    args.extend(["MATCH".into(), p.clone()]);
+                }
+                if let Some(s) = state_filter {
+                    args.extend(["STATE".into(), s.clone()]);
+                }
+                if let Some(n) = count {
+                    args.extend(["COUNT".into(), n.to_string()]);
+                }
+                args
+            }
+            Command::Suspend {
+                keyspace,
+                credential_id,
+            } => {
+                vec!["SUSPEND".into(), keyspace.clone(), credential_id.clone()]
+            }
+            Command::Unsuspend {
+                keyspace,
+                credential_id,
+            } => {
+                vec!["UNSUSPEND".into(), keyspace.clone(), credential_id.clone()]
+            }
+            Command::Schema { keyspace } => vec!["SCHEMA".into(), keyspace.clone()],
+            Command::ConfigGet { key } => vec!["CONFIG".into(), "GET".into(), key.clone()],
+            Command::ConfigSet { key, value } => {
+                vec!["CONFIG".into(), "SET".into(), key.clone(), value.clone()]
+            }
+            Command::Subscribe { channel } => vec!["SUBSCRIBE".into(), channel.clone()],
+            Command::PasswordSet {
+                keyspace,
+                user_id,
+                plaintext,
+                metadata,
+            } => {
+                let mut args = vec![
+                    "PASSWORD".into(),
+                    "SET".into(),
+                    keyspace.clone(),
+                    user_id.clone(),
+                    plaintext.clone(),
+                ];
+                if let Some(m) = metadata {
+                    args.extend(["META".into(), m.to_string()]);
+                }
+                args
+            }
+            Command::PasswordVerify {
+                keyspace,
+                user_id,
+                plaintext,
+            } => {
+                vec![
+                    "PASSWORD".into(),
+                    "VERIFY".into(),
+                    keyspace.clone(),
+                    user_id.clone(),
+                    plaintext.clone(),
+                ]
+            }
+            Command::PasswordChange {
+                keyspace,
+                user_id,
+                old_plaintext,
+                new_plaintext,
+            } => {
+                vec![
+                    "PASSWORD".into(),
+                    "CHANGE".into(),
+                    keyspace.clone(),
+                    user_id.clone(),
+                    old_plaintext.clone(),
+                    new_plaintext.clone(),
+                ]
+            }
+            Command::PasswordReset {
+                keyspace,
+                user_id,
+                new_plaintext,
+            } => {
+                vec![
+                    "PASSWORD".into(),
+                    "RESET".into(),
+                    keyspace.clone(),
+                    user_id.clone(),
+                    new_plaintext.clone(),
+                ]
+            }
+            Command::PasswordImport {
+                keyspace,
+                user_id,
+                hash,
+                metadata,
+            } => {
+                let mut args = vec![
+                    "PASSWORD".into(),
+                    "IMPORT".into(),
+                    keyspace.clone(),
+                    user_id.clone(),
+                    hash.clone(),
+                ];
+                if let Some(m) = metadata {
+                    args.extend(["META".into(), m.to_string()]);
+                }
+                args
+            }
+            Command::Auth { token } => vec!["AUTH".into(), token.clone()],
+            Command::Pipeline(commands) => {
+                let mut args = vec!["PIPELINE".into()];
+                for cmd in commands {
+                    args.extend(cmd.to_wire_args());
+                }
+                args.push("END".into());
+                args
+            }
         }
     }
 }

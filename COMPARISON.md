@@ -10,7 +10,7 @@ ShrouDB is a family of self-hosted, security-first products for managing credent
 | **Answers** | "Where do my auth credentials live?" | "How do I encrypt data without managing keys?" | "How do users log in?" |
 | **Stores** | JWTs, API keys, refresh tokens, HMAC keys, passwords | Encryption keys only — never your data | Nothing — stateless middleware |
 | **Ships as** | Rust binary | Rust binary | npm package (`@shroudb/session`) |
-| **Talks to** | Your application (RESP3 / REST) | Your application (RESP3 / REST) | Your application (middleware) + ShrouDB (TCP) |
+| **Talks to** | Your application (RESP3) | Your application (RESP3) | Your application (middleware) + ShrouDB (TCP) |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -197,4 +197,4 @@ All three products share ~80% of their code:
 - **Zeroize-on-drop** — Key material is wiped when no longer needed
 - **Policy-based auth** — Token → policy → keyspace/keyring + command ACLs
 - **Audit logging** — Structured JSON with actor tracking
-- **REST + RESP3** — Every product speaks both protocols
+- **RESP3 wire protocol** — Purpose-built command protocol with pipelining

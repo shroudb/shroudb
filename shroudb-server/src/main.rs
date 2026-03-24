@@ -229,21 +229,7 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // 9. Warn about unimplemented interface options.
-    if cfg.server.rest_bind.is_some() {
-        tracing::warn!(
-            "rest_bind is configured but the REST API is not yet implemented; \
-             only the RESP3 interface is available"
-        );
-    }
-    if cfg.server.grpc_bind.is_some() {
-        tracing::warn!(
-            "grpc_bind is configured but gRPC is not yet implemented; \
-             only the RESP3 interface is available"
-        );
-    }
-
-    // 10. Install Prometheus metrics recorder with HTTP scrape endpoint.
+    // 9. Install Prometheus metrics recorder with HTTP scrape endpoint.
     let mut prom_builder = metrics_exporter_prometheus::PrometheusBuilder::new();
     if let Some(metrics_addr) = cfg.server.metrics_bind {
         prom_builder = prom_builder.with_http_listener(metrics_addr);
@@ -253,14 +239,14 @@ async fn main() -> anyhow::Result<()> {
         .install()
         .expect("failed to install metrics recorder");
 
-    // 11. Set up shutdown signal (SIGTERM + SIGINT).
+    // 10. Set up shutdown signal (SIGTERM + SIGINT).
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         shutdown_signal().await;
         let _ = shutdown_tx.send(true);
     });
 
-    // 12. Spawn background scheduler tasks.
+    // 11. Spawn background scheduler tasks.
     let scheduler_handles = scheduler::spawn_all(
         Arc::clone(&engine),
         Arc::clone(&dispatcher),
@@ -268,16 +254,16 @@ async fn main() -> anyhow::Result<()> {
         cli.config.clone(),
     );
 
-    // 13. Run server (blocks until shutdown).
+    // 12. Run server (blocks until shutdown).
     tracing::info!(bind = %cfg.server.bind, "shroudb ready");
     server::run(&cfg.server, dispatcher, shutdown_rx).await?;
 
-    // 14. Abort scheduler tasks.
+    // 13. Abort scheduler tasks.
     for handle in scheduler_handles {
         handle.abort();
     }
 
-    // 15. Shut down storage engine (flush WAL, fsync).
+    // 14. Shut down storage engine (flush WAL, fsync).
     engine.shutdown().await?;
 
     // 15. Clean exit.

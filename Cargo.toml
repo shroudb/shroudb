@@ -37,7 +37,6 @@ postcard = { version = "1", features = ["alloc"] }
 ring = "0.17"
 
 # Networking
-axum = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 rustls = "0.23"
 rustls-native-certs = "0.8"
