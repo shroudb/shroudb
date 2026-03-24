@@ -151,6 +151,8 @@ jobs:
           tags: |
             ghcr.io/shroudb/${{ matrix.image }}:${{ github.ref_name }}
             ghcr.io/shroudb/${{ matrix.image }}:latest
+          secrets: |
+            git_auth=https://x-access-token:${{ secrets.GH_PAT }}@github.com/
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
