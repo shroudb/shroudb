@@ -1,5 +1,5 @@
 [package]
-name = "keyva-fuzz"
+name = "shroudb-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -10,8 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 tokio = { version = "1", features = ["rt", "io-util"] }
-keyva-protocol = { path = "../keyva-protocol" }
-keyva-storage = { path = "../keyva-storage" }
+shroudb-protocol = { path = "../shroudb-protocol" }
+shroudb-storage = { path = "../shroudb-storage" }
 toml = "1"
 
 [[bin]]

@@ -1,7 +1,7 @@
 // k6 scenario: Password set, verify, change, and lockout
 // Run: k6 run k6/password-lifecycle.js
 //
-// Requires Keyva running with a "users" password keyspace:
+// Requires ShrouDB running with a "users" password keyspace:
 //   [keyrings.users]
 //   type = "password"
 //   algorithm = "argon2id"
@@ -12,8 +12,8 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Trend, Counter } from "k6/metrics";
 
-const BASE = __ENV.KEYVA_REST_URL || "http://localhost:8080";
-const KEYSPACE = __ENV.KEYVA_KEYSPACE || "users";
+const BASE = __ENV.SHROUDB_REST_URL || "http://localhost:8080";
+const KEYSPACE = __ENV.SHROUDB_KEYSPACE || "users";
 
 const setErrors = new Rate("password_set_errors");
 const verifyErrors = new Rate("password_verify_errors");

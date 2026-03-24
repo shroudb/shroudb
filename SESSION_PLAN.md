@@ -1,16 +1,16 @@
-# Keyva Session — Plan
+# ShrouDB Session — Plan
 
 **Status:** Pre-build
 
-HTTP session management middleware that composes Keyva primitives (JWT + refresh tokens + passwords) into a complete auth flow with cookie management. Ships as a library (`@keyva/session` npm package), not a separate server.
+HTTP session management middleware that composes ShrouDB primitives (JWT + refresh tokens + passwords) into a complete auth flow with cookie management. Ships as a library (`@shroudb/session` npm package), not a separate server.
 
 ---
 
 ## What Session Is
 
-A thin middleware layer that sits between your web framework and Keyva. It owns the HTTP contract — cookies, CSRF, OAuth redirects — while delegating all credential operations to Keyva over TCP.
+A thin middleware layer that sits between your web framework and ShrouDB. It owns the HTTP contract — cookies, CSRF, OAuth redirects — while delegating all credential operations to ShrouDB over TCP.
 
-**Session is NOT a credential type.** It's a composition pattern over existing Keyva keyspaces:
+**Session is NOT a credential type.** It's a composition pattern over existing ShrouDB keyspaces:
 - JWT keyspace → short-lived access tokens
 - Refresh token keyspace → silent rotation with reuse detection
 - Password keyspace → user authentication
@@ -18,10 +18,10 @@ A thin middleware layer that sits between your web framework and Keyva. It owns 
 **Session is NOT a server.** It's a middleware library you add to your existing app:
 
 ```typescript
-import { keyvaSession } from '@keyva/session';
+import { shroudbSession } from '@shroudb/session';
 
-app.use(keyvaSession({
-  keyva: 'keyva://localhost:6399',
+app.use(shroudbSession({
+  shroudb: 'shroudb://localhost:6399',
   jwt: { keyspace: 'sessions', ttl: '15m' },
   refresh: { keyspace: 'refresh', ttl: '30d' },
   passwords: { keyspace: 'users' },
@@ -36,12 +36,12 @@ app.use(keyvaSession({
 
 A separate session service adds a network hop on every request and a deployment to manage. Session validation must be fast — it's on every HTTP request. A middleware library:
 
-- Runs in-process — no extra latency beyond the Keyva TCP call
+- Runs in-process — no extra latency beyond the ShrouDB TCP call
 - No extra deployment — it's a dependency, not infrastructure
 - Framework-native — integrates with your existing middleware stack
 - Configurable per-app — different apps can have different cookie settings
 
-The Keyva TCP call (VERIFY) is ~1ms. Adding a service hop would double that for no benefit.
+The ShrouDB TCP call (VERIFY) is ~1ms. Adding a service hop would double that for no benefit.
 
 ---
 
@@ -51,7 +51,7 @@ The Keyva TCP call (VERIFY) is ~1ms. Adding a service hop would double that for 
 
 The middleware runs before your route handlers. It:
 1. Extracts the session cookie
-2. VERIFYs the JWT against Keyva
+2. VERIFYs the JWT against ShrouDB
 3. If expired but refresh token present, REFRESHes silently (new cookies)
 4. Injects user context into the request (e.g., `req.user`)
 5. If no valid session, sets `req.user = null` (doesn't reject — let the route decide)
@@ -81,7 +81,7 @@ All endpoint paths are configurable (`prefix: '/auth'` by default).
 
 ### Signup
 ```
-Client                  Session Middleware           Keyva
+Client                  Session Middleware           ShrouDB
   │                          │                        │
   │  POST /auth/signup       │                        │
   │  {email, password}       │                        │
@@ -108,7 +108,7 @@ Client                  Session Middleware           Keyva
 
 ### Request Validation (every request)
 ```
-Client                  Session Middleware           Keyva
+Client                  Session Middleware           ShrouDB
   │                          │                        │
   │  GET /api/resource       │                        │
   │  Cookie: sid=jwt         │                        │
@@ -125,7 +125,7 @@ Client                  Session Middleware           Keyva
 
 ### Silent Refresh (JWT expired, refresh token valid)
 ```
-Client                  Session Middleware           Keyva
+Client                  Session Middleware           ShrouDB
   │                          │                        │
   │  GET /api/resource       │                        │
   │  Cookie: sid=expired     │                        │
@@ -159,7 +159,7 @@ Client                  Session Middleware           Keyva
 - `rt` has a long Max-Age and restricted Path — only sent to the refresh endpoint
 - `csrf` is readable by JavaScript (not HttpOnly) so the app can include it in request headers
 
-**"Remember me":** Sets Max-Age on both `sid` and `rt`. The refresh token TTL in Keyva controls the actual session duration.
+**"Remember me":** Sets Max-Age on both `sid` and `rt`. The refresh token TTL in ShrouDB controls the actual session duration.
 
 ---
 
@@ -186,13 +186,13 @@ The middleware handles the OAuth redirect flow:
 2. GitHub redirects back to `/auth/oauth/github/callback?code=...&state=...`
 3. Middleware exchanges code for GitHub access token
 4. Fetches user profile from GitHub API
-5. Creates or links user in Keyva (PASSWORD SET with a random password, or skip if user exists)
+5. Creates or links user in ShrouDB (PASSWORD SET with a random password, or skip if user exists)
 6. Creates session (ISSUE JWT + refresh token)
 7. Sets cookies, redirects to app
 
 **Provider configuration:**
 ```typescript
-keyvaSession({
+shroudbSession({
   // ...
   oauth: {
     github: {
@@ -217,10 +217,10 @@ The initial release targets **Hono** (lightweight, runs everywhere — Node, Den
 
 ```typescript
 import { Hono } from 'hono';
-import { keyvaSession } from '@keyva/session';
+import { shroudbSession } from '@shroudb/session';
 
 const app = new Hono();
-app.use('*', keyvaSession({ /* config */ }));
+app.use('*', shroudbSession({ /* config */ }));
 
 app.get('/dashboard', (c) => {
   if (!c.get('user')) return c.redirect('/login');
@@ -235,8 +235,8 @@ Future adapters: Express, Fastify, Next.js middleware, SvelteKit hooks.
 ## Package Structure
 
 ```
-keyva-session/
-  package.json        — @keyva/session
+shroudb-session/
+  package.json        — @shroudb/session
   src/
     index.ts          — exports middleware factory
     middleware.ts      — core middleware logic
@@ -256,7 +256,7 @@ keyva-session/
 ```
 
 **Dependencies:**
-- `@keyva/client` — Keyva TCP client (already built)
+- `@shroudb/client` — ShrouDB TCP client (already built)
 - `hono` — middleware target (peer dependency)
 - Zero other runtime deps — cookie parsing is stdlib, OAuth is just HTTP calls
 
@@ -264,23 +264,23 @@ keyva-session/
 
 ## Relationship to better-auth
 
-For meterd specifically, `@keyva/session` replaces better-auth:
+For meterd specifically, `@shroudb/session` replaces better-auth:
 
-| Concern | better-auth | @keyva/session |
+| Concern | better-auth | @shroudb/session |
 |---------|-------------|----------------|
-| Password hashing | Internal (bcrypt) | Keyva (argon2id) |
-| Session tokens | Internal (Postgres) | Keyva (JWT + refresh) |
-| Cookie management | Internal | @keyva/session middleware |
-| OAuth | Built-in providers | @keyva/session OAuth module |
-| Email verification | Built-in | Application concern (use Keyva ISSUE for verification tokens) |
-| Password reset | Built-in | @keyva/session endpoint |
-| Rate limiting | None | Keyva (per-credential lockout) |
+| Password hashing | Internal (bcrypt) | ShrouDB (argon2id) |
+| Session tokens | Internal (Postgres) | ShrouDB (JWT + refresh) |
+| Cookie management | Internal | @shroudb/session middleware |
+| OAuth | Built-in providers | @shroudb/session OAuth module |
+| Email verification | Built-in | Application concern (use ShrouDB ISSUE for verification tokens) |
+| Password reset | Built-in | @shroudb/session endpoint |
+| Rate limiting | None | ShrouDB (per-credential lockout) |
 
 The migration path for meterd:
-1. Deploy Keyva
-2. Add `@keyva/session` to the Next.js app
+1. Deploy ShrouDB
+2. Add `@shroudb/session` to the Next.js app
 3. Import existing passwords via `PASSWORD IMPORT`
-4. Switch auth routes from better-auth to @keyva/session
+4. Switch auth routes from better-auth to @shroudb/session
 5. Remove better-auth dependency
 
 ---
@@ -300,7 +300,7 @@ The migration path for meterd:
 
 ## What This Plan Does NOT Cover
 
-- **Multi-factor authentication.** TOTP/WebAuthn would be a separate module or Keyva keyspace type. Not in v1.
+- **Multi-factor authentication.** TOTP/WebAuthn would be a separate module or ShrouDB keyspace type. Not in v1.
 - **Role-based access control.** Session tells you WHO the user is. Authorization (what they can do) is the application's responsibility.
 - **Email/SMS delivery.** Password reset generates a token; delivering it is the application's concern (webhook, Resend, SendGrid, etc.).
 - **User profile management.** Session manages credentials and sessions, not user profiles. Profile data lives in your database.

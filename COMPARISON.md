@@ -1,28 +1,28 @@
-# The Keyva Platform
+# The ShrouDB Platform
 
-Keyva is a family of self-hosted, security-first products for managing credentials, encryption, and sessions. Each product shares a common foundation — RESP3 protocol, AES-256-GCM encryption, WAL-based durability, automatic key rotation — but serves a distinct purpose.
+ShrouDB is a family of self-hosted, security-first products for managing credentials, encryption, and sessions. Each product shares a common foundation — RESP3 protocol, AES-256-GCM encryption, WAL-based durability, automatic key rotation — but serves a distinct purpose.
 
 ## The Three Products
 
-| | **Keyva** | **Keyva Transit** | **Keyva Session** |
+| | **ShrouDB** | **ShrouDB Transit** | **ShrouDB Session** |
 |---|---|---|---|
 | **One-liner** | Credential database | Encryption-as-a-service | Session middleware |
 | **Answers** | "Where do my auth credentials live?" | "How do I encrypt data without managing keys?" | "How do users log in?" |
 | **Stores** | JWTs, API keys, refresh tokens, HMAC keys, passwords | Encryption keys only — never your data | Nothing — stateless middleware |
-| **Ships as** | Rust binary | Rust binary | npm package (`@keyva/session`) |
-| **Talks to** | Your application (RESP3 / REST) | Your application (RESP3 / REST) | Your application (middleware) + Keyva (TCP) |
+| **Ships as** | Rust binary | Rust binary | npm package (`@shroudb/session`) |
+| **Talks to** | Your application (RESP3 / REST) | Your application (RESP3 / REST) | Your application (middleware) + ShrouDB (TCP) |
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Your Application                                           │
 ├──────────┬───────────────────┬──────────────────────────────┤
 │          │                   │                              │
-│  @keyva/session              │                              │
+│  @shroudb/session              │                              │
 │  (middleware)                │                              │
 │     │                       │                              │
 │     ▼                       ▼                 ▼            │
 │  ┌──────────┐      ┌──────────────┐    ┌────────────────┐  │
-│  │  Keyva   │      │Keyva Transit │    │  Your storage  │  │
+│  │  ShrouDB   │      │ShrouDB Transit │    │  Your storage  │  │
 │  │  :6399   │      │    :6400     │    │  (Postgres,    │  │
 │  │          │      │              │    │   S3, Redis)   │  │
 │  └──────────┘      └──────────────┘    └────────────────┘  │
@@ -33,7 +33,7 @@ Keyva is a family of self-hosted, security-first products for managing credentia
 
 ---
 
-## Keyva — Credential Database
+## ShrouDB — Credential Database
 
 A single Rust binary that manages the cryptographic credentials your auth system runs on.
 
@@ -59,9 +59,9 @@ A single Rust binary that manages the cryptographic credentials your auth system
 
 ---
 
-## Keyva Transit — Encryption as a Service
+## ShrouDB Transit — Encryption as a Service
 
-A key management and encryption API. Your application sends plaintext, gets back ciphertext encrypted with a managed key. You store the ciphertext wherever you want. Key material never leaves Keyva Transit.
+A key management and encryption API. Your application sends plaintext, gets back ciphertext encrypted with a managed key. You store the ciphertext wherever you want. Key material never leaves ShrouDB Transit.
 
 ### How It Works
 
@@ -86,7 +86,7 @@ The server never sees or stores your data. It manages the keys and performs cryp
 | `ROTATE <keyring>` | Rotate key version: Staged → Active → Draining → Retired |
 | `KEY_INFO <keyring>` | Key metadata, versions, and state |
 
-### What's Different from Keyva
+### What's Different from ShrouDB
 
 - **No credential storage.** Transit doesn't store API keys, tokens, or passwords. It stores encryption keys and performs operations with them.
 - **Keyrings instead of keyspaces.** A keyring holds versioned encryption keys. Same lifecycle state machine, different purpose.
@@ -95,17 +95,17 @@ The server never sees or stores your data. It manages the keys and performs cryp
 
 ---
 
-## Keyva Session — Session Middleware
+## ShrouDB Session — Session Middleware
 
-A stateless middleware library that composes Keyva primitives (JWT + refresh tokens + passwords) into a complete auth flow with cookie management. Ships as `@keyva/session` for Node.js.
+A stateless middleware library that composes ShrouDB primitives (JWT + refresh tokens + passwords) into a complete auth flow with cookie management. Ships as `@shroudb/session` for Node.js.
 
 ### Setup
 
 ```typescript
-import { keyvaSession } from '@keyva/session';
+import { shroudbSession } from '@shroudb/session';
 
-app.use(keyvaSession({
-  keyva: 'keyva://localhost:6399',
+app.use(shroudbSession({
+  shroudb: 'shroudb://localhost:6399',
   jwtKeyspace: 'sessions',
   passwordKeyspace: 'users',
   cookieName: 'sid',
@@ -124,7 +124,7 @@ app.use(keyvaSession({
 | `/session/logout-all` | POST | Revoke entire token family → clear cookies |
 | `/session/validate` | GET | Extract cookie → verify JWT → return user context |
 | `/session/refresh` | POST | Silent token rotation → new cookies |
-| `/session/password/change` | POST | Change password via Keyva |
+| `/session/password/change` | POST | Change password via ShrouDB |
 | `/session/password/reset` | POST | Generate reset token → send email (webhook) |
 | `/session/csrf` | GET | Generate CSRF token |
 | `/session/oauth/:provider/start` | GET | Redirect to OAuth provider |
@@ -140,7 +140,7 @@ app.use(keyvaSession({
 - Password reset flow
 - HTTP-layer rate limiting
 
-### What Session Delegates to Keyva
+### What Session Delegates to ShrouDB
 
 - Password hashing
 - Token generation and verification
@@ -151,37 +151,37 @@ app.use(keyvaSession({
 
 ## How They Compare to Auth0 / Clerk
 
-| | **Auth0 / Clerk** | **Keyva Platform** |
+| | **Auth0 / Clerk** | **ShrouDB Platform** |
 |---|---|---|
 | **Scope** | Full identity SaaS (login UI, social login, user management) | Credential infrastructure + encryption + session middleware |
 | **Hosting** | Their servers | Your servers — single binaries, zero external dependencies |
 | **Data ownership** | They hold your keys, tokens, and user data | You own everything — encrypted on your disk |
 | **Latency** | Network hop to their API on every auth check | In-process memory lookups; sub-millisecond VERIFY |
 | **Key rotation** | Manual or limited automation | Automatic rotation with drain periods across all products |
-| **Encryption** | Not offered | Keyva Transit — full encryption-as-a-service with envelope encryption |
+| **Encryption** | Not offered | ShrouDB Transit — full encryption-as-a-service with envelope encryption |
 | **Cost model** | Per-MAU pricing (scales with users) | Free — your infrastructure |
 | **Vendor lock-in** | Significant (proprietary SDKs, hosted user store) | RESP3 wire protocol, standard crypto, export-ready |
-| **Session management** | Built-in (their way) | Keyva Session — same DX, your infrastructure, full control |
+| **Session management** | Built-in (their way) | ShrouDB Session — same DX, your infrastructure, full control |
 
 ### When to Use Auth0 / Clerk
 
 If you want a turnkey login experience — social login, hosted UI, user management, passwordless flows — and don't need fine-grained control over credential lifecycle. They solve a higher-level problem and get you to market faster when identity _is_ the product concern.
 
-### When to Use Keyva
+### When to Use ShrouDB
 
 - **You need data sovereignty.** Credentials and encryption keys never leave your infrastructure.
 - **You need encryption-as-a-service.** Transit lets you encrypt application data without managing keys.
-- **You need multiple credential types.** Instead of stitching together Vault + Redis + your database + bcrypt, Keyva unifies them.
-- **You want auth0/Clerk DX without the vendor lock-in.** Keyva Session gives you signup/login/logout/refresh with one middleware call, backed by infrastructure you own.
+- **You need multiple credential types.** Instead of stitching together Vault + Redis + your database + bcrypt, ShrouDB unifies them.
+- **You want auth0/Clerk DX without the vendor lock-in.** ShrouDB Session gives you signup/login/logout/refresh with one middleware call, backed by infrastructure you own.
 - **You need audit compliance.** Every operation is logged with actor tracking, structured for compliance requirements.
 
 ### Using Them Together
 
-Keyva pairs well _alongside_ an identity provider:
+ShrouDB pairs well _alongside_ an identity provider:
 
 - **Clerk** handles user-facing login (social auth, MFA, hosted UI).
-- **Keyva** manages the signing keys, API keys, and refresh tokens your backend issues _after_ authentication.
-- **Keyva Transit** encrypts sensitive application data (PII, medical records, financial data) at rest.
+- **ShrouDB** manages the signing keys, API keys, and refresh tokens your backend issues _after_ authentication.
+- **ShrouDB Transit** encrypts sensitive application data (PII, medical records, financial data) at rest.
 
 ---
 

@@ -1,4 +1,4 @@
-# JWT Lifecycle in Rails — Before and After Keyva
+# JWT Lifecycle in Rails — Before and After ShrouDB
 
 ## The Problem
 
@@ -14,7 +14,7 @@ This is typically spread across models, controllers, initializers, and backgroun
 
 ---
 
-## Without Keyva
+## Without ShrouDB
 
 ### Typical Rails JWT setup
 
@@ -183,13 +183,13 @@ end
 
 ---
 
-## With Keyva
+## With ShrouDB
 
 ### Setup
 
 ```bash
-# Start Keyva (one binary, zero dependencies)
-docker run -d -p 6399:6399 -p 8080:8080 ghcr.io/keyva-io/keyva:latest
+# Start ShrouDB (one binary, zero dependencies)
+docker run -d -p 6399:6399 -p 8080:8080 ghcr.io/shroudb/shroudb:latest
 ```
 
 ```toml
@@ -208,7 +208,7 @@ default_ttl = "15m"
 # app/services/token_service.rb
 class TokenService
   def self.issue(user)
-    response = HTTP.post("http://keyva:8080/v1/auth-tokens/issue", json: {
+    response = HTTP.post("http://shroudb:8080/v1/auth-tokens/issue", json: {
       claims: { sub: user.id.to_s }
     })
 
@@ -217,7 +217,7 @@ class TokenService
 end
 ```
 
-That's it. Keyva:
+That's it. ShrouDB:
 - Picks the active signing key
 - Sets `iat`, `exp`, `kid` automatically
 - Returns a signed JWT
@@ -235,7 +235,7 @@ class JwtAuth
     token = extract_token(env)
     return unauthorized unless token
 
-    response = HTTP.post("http://keyva:8080/v1/auth-tokens/verify", json: {
+    response = HTTP.post("http://shroudb:8080/v1/auth-tokens/verify", json: {
       token: token
     })
 
@@ -264,13 +264,13 @@ end
 Or skip the middleware entirely and verify with the JWKS endpoint — standard JWT libraries can validate against it:
 
 ```ruby
-# Alternative: verify locally using Keyva's JWKS endpoint
+# Alternative: verify locally using ShrouDB's JWKS endpoint
 require "jwt"
 require "net/http"
 require "json"
 
 class JwtAuth
-  JWKS_URL = "http://keyva:8080/v1/auth-tokens/jwks"
+  JWKS_URL = "http://shroudb:8080/v1/auth-tokens/jwks"
   JWKS_CACHE_TTL = 3600
 
   def initialize(app)
@@ -322,14 +322,14 @@ end
 Already built in. Point any JWT consumer at:
 
 ```
-http://keyva:8080/v1/auth-tokens/jwks
+http://shroudb:8080/v1/auth-tokens/jwks
 ```
 
 Returns a standards-compliant JWKS with cache headers. No code to write.
 
 ### Key rotation
 
-Already built in. Keyva rotates automatically based on `rotation_days`. The lifecycle:
+Already built in. ShrouDB rotates automatically based on `rotation_days`. The lifecycle:
 
 ```
 New key created (STAGED, 7 days before needed)
@@ -347,28 +347,28 @@ No cron jobs. No rake tasks. No coordination. Existing tokens signed by the old 
 
 ```ruby
 # Revoke a single token
-HTTP.post("http://keyva:8080/v1/auth-tokens/revoke", json: {
+HTTP.post("http://shroudb:8080/v1/auth-tokens/revoke", json: {
   credential_id: credential_id
 })
 ```
 
-No blocklist table. Keyva tracks revoked tokens in memory with TTL-based expiry.
+No blocklist table. ShrouDB tracks revoked tokens in memory with TTL-based expiry.
 
 ---
 
 ## Side by Side
 
-| | **Rails + jwt gem** | **Rails + Keyva** |
+| | **Rails + jwt gem** | **Rails + ShrouDB** |
 |---|---|---|
-| **Key storage** | Database (private keys in your DB) | Keyva (encrypted WAL, mlock'd memory) |
+| **Key storage** | Database (private keys in your DB) | ShrouDB (encrypted WAL, mlock'd memory) |
 | **Key rotation** | Manual cron job + custom drain logic | Automatic (`rotation_days = 90`) |
 | **JWKS endpoint** | Hand-rolled controller + JWK math | Built-in (`/v1/{ks}/jwks`) |
-| **Token issuance** | ~20 lines (load key, build payload, encode) | 3 lines (POST to Keyva) |
-| **Token verification** | ~30 lines (find key by kid, decode, handle errors) | 5 lines (POST to Keyva) or local JWKS verify |
+| **Token issuance** | ~20 lines (load key, build payload, encode) | 3 lines (POST to ShrouDB) |
+| **Token verification** | ~30 lines (find key by kid, decode, handle errors) | 5 lines (POST to ShrouDB) or local JWKS verify |
 | **Revocation** | Build a blocklist table + middleware check | `POST /v1/{ks}/revoke` |
 | **Clock skew** | Hope you remembered to add `leeway:` | Built-in (configurable, default 30s) |
 | **Algorithm support** | Whatever you implement | ES256, ES384, RS256, RS384, RS512, EdDSA |
-| **Multiple apps** | Rebuild for each app/language | Same Keyva instance, different keyspaces |
+| **Multiple apps** | Rebuild for each app/language | Same ShrouDB instance, different keyspaces |
 | **Lines of code** | ~150+ (service, middleware, controller, job, migration) | ~15 (two HTTP calls) |
 
 ### What you delete from your Rails app
@@ -382,25 +382,25 @@ No blocklist table. Keyva tracks revoked tokens in memory with TTL-based expiry.
 
 ### What you keep
 
-- Your user model (Keyva doesn't own users)
+- Your user model (ShrouDB doesn't own users)
 - Your business logic
-- Your authorization rules (Keyva handles authentication primitives, not authorization)
+- Your authorization rules (ShrouDB handles authentication primitives, not authorization)
 
 ---
 
 ## API Keys Too
 
-The same Keyva instance handles API keys — no separate infrastructure:
+The same ShrouDB instance handles API keys — no separate infrastructure:
 
 ```ruby
 # Issue an API key for a user
-response = HTTP.post("http://keyva:8080/v1/service-keys/issue", json: {
+response = HTTP.post("http://shroudb:8080/v1/service-keys/issue", json: {
   metadata: { user_id: user.id.to_s, plan: "pro" }
 })
 api_key = response.parse["api_key"]  # "sk_7Kj2mN..."
 
 # Verify an incoming API key
-response = HTTP.post("http://keyva:8080/v1/service-keys/verify", json: {
+response = HTTP.post("http://shroudb:8080/v1/service-keys/verify", json: {
   token: params[:api_key]
 })
 if response.status.ok?
@@ -424,13 +424,13 @@ hash_algorithm = "sha256"
 
 ```ruby
 # Issue a refresh token alongside the JWT
-refresh = HTTP.post("http://keyva:8080/v1/sessions/issue", json: {
+refresh = HTTP.post("http://shroudb:8080/v1/sessions/issue", json: {
   metadata: { sub: user.id.to_s }
 })
 refresh_token = refresh.parse["token"]
 
 # Later: exchange for a new token
-new_refresh = HTTP.post("http://keyva:8080/v1/sessions/refresh", json: {
+new_refresh = HTTP.post("http://shroudb:8080/v1/sessions/refresh", json: {
   token: refresh_token
 })
 # Returns new token; old one is consumed (single-use)
@@ -453,12 +453,12 @@ Family-based reuse detection, chain limiting, and automatic revocation — built
 
 Rails is great at business logic. It shouldn't also be a credential management system. The `jwt` gem gives you encoding and decoding. Everything else — key storage, rotation, JWKS, revocation, drain periods — is on you.
 
-Keyva is one process that handles all of it. Your Rails app calls it over HTTP and gets back tokens. When you add a Phoenix service next quarter, it calls the same Keyva instance. When you need API keys, you add a config block. When you need to rotate keys, it already happened.
+ShrouDB is one process that handles all of it. Your Rails app calls it over HTTP and gets back tokens. When you add a Phoenix service next quarter, it calls the same ShrouDB instance. When you need API keys, you add a config block. When you need to rotate keys, it already happened.
 
 ```ruby
 # Your entire JWT integration
-HTTP.post("http://keyva:8080/v1/auth-tokens/issue", json: { claims: { sub: user.id.to_s } })
-HTTP.post("http://keyva:8080/v1/auth-tokens/verify", json: { token: token })
+HTTP.post("http://shroudb:8080/v1/auth-tokens/issue", json: { claims: { sub: user.id.to_s } })
+HTTP.post("http://shroudb:8080/v1/auth-tokens/verify", json: { token: token })
 ```
 
 Two HTTP calls. No gems. No migrations. No cron jobs.

@@ -14,7 +14,7 @@ import { check, sleep } from "k6";
 import { Rate, Trend, Counter } from "k6/metrics";
 import { SharedArray } from "k6/data";
 
-const BASE = __ENV.KEYVA_REST_URL || "http://localhost:8080";
+const BASE = __ENV.SHROUDB_REST_URL || "http://localhost:8080";
 
 const errorRate = new Rate("errors");
 const verifyLatency = new Trend("verify_latency");

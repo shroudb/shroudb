@@ -1,7 +1,7 @@
 // k6 scenario: HMAC sign and verify under load
 // Run: k6 run k6/hmac-sign-verify.js
 //
-// Requires Keyva running with a "webhooks" HMAC keyspace and at least
+// Requires ShrouDB running with a "webhooks" HMAC keyspace and at least
 // one signing key (ROTATE first).
 //
 // Note: HMAC ISSUE signs serde_json::to_vec(claims). VERIFY compares
@@ -12,8 +12,8 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Trend } from "k6/metrics";
 
-const BASE = __ENV.KEYVA_REST_URL || "http://localhost:8080";
-const KEYSPACE = __ENV.KEYVA_KEYSPACE || "webhooks";
+const BASE = __ENV.SHROUDB_REST_URL || "http://localhost:8080";
+const KEYSPACE = __ENV.SHROUDB_KEYSPACE || "webhooks";
 
 const signErrors = new Rate("hmac_sign_errors");
 const verifyErrors = new Rate("hmac_verify_errors");

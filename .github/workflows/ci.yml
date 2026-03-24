@@ -89,15 +89,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p keyva -p keyva-cli
+        run: cargo build --release --target ${{ matrix.target }} -p shroudb -p shroudb-cli
 
       - name: Package
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/keyva dist/
-          cp target/${{ matrix.target }}/release/keyva-cli dist/
-          cd dist && tar czf keyva-${{ github.ref_name }}-${{ matrix.target }}.tar.gz keyva keyva-cli && cd ..
-          rm dist/keyva dist/keyva-cli
+          cp target/${{ matrix.target }}/release/shroudb dist/
+          cp target/${{ matrix.target }}/release/shroudb-cli dist/
+          cd dist && tar czf shroudb-${{ github.ref_name }}-${{ matrix.target }}.tar.gz shroudb shroudb-cli && cd ..
+          rm dist/shroudb dist/shroudb-cli
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -116,10 +116,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: keyva
-            target: keyva
-          - image: keyva-cli
-            target: keyva-cli
+          - image: shroudb
+            target: shroudb
+          - image: shroudb-cli
+            target: shroudb-cli
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
@@ -135,8 +135,8 @@ jobs:
           target: ${{ matrix.target }}
           push: true
           tags: |
-            ghcr.io/keyva-io/${{ matrix.image }}:${{ github.ref_name }}
-            ghcr.io/keyva-io/${{ matrix.image }}:latest
+            ghcr.io/shroudb/${{ matrix.image }}:${{ github.ref_name }}
+            ghcr.io/shroudb/${{ matrix.image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

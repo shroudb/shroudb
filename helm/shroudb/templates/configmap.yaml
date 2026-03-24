@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-shroudb-config
+  labels:
+    app.kubernetes.io/name: shroudb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  config.toml: |
+    {{- .Values.config | nindent 4 }}

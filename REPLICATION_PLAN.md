@@ -16,25 +16,25 @@ These metrics were implemented as part of Phase 0 instrumentation. They are now 
 
 | Metric | Type | Labels | Why it matters |
 |--------|------|--------|----------------|
-| `keyva_commands_by_behavior_total` | counter | `behavior={PureRead,ObservationalRead,ConditionalWrite,WriteOnly}` | Read/write ratio. If writes dominate, replication buys nothing. If reads are 95%+, replicas have clear value. |
-| `keyva_verify_rate` | histogram | `keyspace` | VERIFY is the hot path that replicas would serve. If it's not hot, replicas are overhead. |
-| `keyva_concurrent_connections` | gauge | — | Saturation signal. Single-node may be fine at 50 connections; not at 5,000. |
-| `keyva_command_queue_depth` | gauge | — | If commands are queuing behind the WAL mutex, that's a write bottleneck replicas won't fix. |
-| `keyva_wal_write_duration_seconds` | histogram | `keyspace` | Write latency. If WAL writes are fast, the bottleneck is elsewhere. |
-| `keyva_wal_segment_bytes_total` | counter | — | WAL throughput in bytes/sec. Determines bandwidth needed for WAL shipping. |
-| `keyva_snapshot_size_bytes` | gauge | — | Bootstrap cost for new replicas. If snapshots are 10MB, bootstrap is trivial. If 10GB, it's a production event. |
-| `keyva_revocation_check_duration_seconds` | histogram | `keyspace` | If revocation checks are slow, stale replicas become a security problem faster. |
+| `shroudb_commands_by_behavior_total` | counter | `behavior={PureRead,ObservationalRead,ConditionalWrite,WriteOnly}` | Read/write ratio. If writes dominate, replication buys nothing. If reads are 95%+, replicas have clear value. |
+| `shroudb_verify_rate` | histogram | `keyspace` | VERIFY is the hot path that replicas would serve. If it's not hot, replicas are overhead. |
+| `shroudb_concurrent_connections` | gauge | — | Saturation signal. Single-node may be fine at 50 connections; not at 5,000. |
+| `shroudb_command_queue_depth` | gauge | — | If commands are queuing behind the WAL mutex, that's a write bottleneck replicas won't fix. |
+| `shroudb_wal_write_duration_seconds` | histogram | `keyspace` | Write latency. If WAL writes are fast, the bottleneck is elsewhere. |
+| `shroudb_wal_segment_bytes_total` | counter | — | WAL throughput in bytes/sec. Determines bandwidth needed for WAL shipping. |
+| `shroudb_snapshot_size_bytes` | gauge | — | Bootstrap cost for new replicas. If snapshots are 10MB, bootstrap is trivial. If 10GB, it's a production event. |
+| `shroudb_revocation_check_duration_seconds` | histogram | `keyspace` | If revocation checks are slow, stale replicas become a security problem faster. |
 
 ### Existing metrics that already inform the decision
 
 These are already emitted (from `scheduler.rs` and `dispatch.rs`):
 
-- `keyva_commands_total{command, keyspace, result}` — command volume and error rates
-- `keyva_command_duration_seconds{command, keyspace}` — latency per command type
-- `keyva_wal_entries_since_snapshot` — WAL growth rate
-- `keyva_credentials_total{keyspace, type}` — dataset size
-- `keyva_revocations_active{keyspace}` — revocation set pressure
-- `keyva_uptime_seconds` — availability baseline
+- `shroudb_commands_total{command, keyspace, result}` — command volume and error rates
+- `shroudb_command_duration_seconds{command, keyspace}` — latency per command type
+- `shroudb_wal_entries_since_snapshot` — WAL growth rate
+- `shroudb_credentials_total{keyspace, type}` — dataset size
+- `shroudb_revocations_active{keyspace}` — revocation set pressure
+- `shroudb_uptime_seconds` — availability baseline
 
 ### Decision thresholds
 
@@ -86,7 +86,7 @@ Primary (read/write)
 - Primary sends WAL entries (still encrypted, still self-describing) as they're written
 - Replicas decrypt, apply to their in-memory index, discard (no local WAL needed for read-only replicas)
 
-**Why this fits Keyva:**
+**Why this fits ShrouDB:**
 - WAL entries are already self-describing (keyspace ID, op type, full payload) — the format was designed for this
 - Command classification already separates reads from writes — replicas just refuse `WriteOnly` commands
 - Encryption keys must be shared (replicas need the master key or derived keys to decrypt WAL entries)
@@ -139,7 +139,7 @@ A new replica needs to reach a consistent state before it can serve reads.
 ### Open questions
 
 - **Snapshot transfer mechanism:** Inline over the replication TCP stream, or out-of-band (S3, shared filesystem)? Inline is simpler. Out-of-band scales better for large datasets.
-- **Snapshot size gating:** If `keyva_snapshot_size_bytes` (Phase 0) is large, bootstrap could take minutes. Need a progress indicator and health state (`bootstrapping` → `catching_up` → `ready`).
+- **Snapshot size gating:** If `shroudb_snapshot_size_bytes` (Phase 0) is large, bootstrap could take minutes. Need a progress indicator and health state (`bootstrapping` → `catching_up` → `ready`).
 - **Encryption key distribution:** Replicas need the same master key (or derived per-keyspace keys). This is a deployment/operational concern, not a protocol concern. Document it clearly.
 
 ---
@@ -161,8 +161,8 @@ This is identical to the on-disk WAL segment format. A replica's replication rea
 - Primary sends a heartbeat frame every 5 seconds if no WAL entries have been sent
 - Heartbeat carries the primary's current WAL position (segment_seq, byte_offset)
 - Replica compares its position to the heartbeat to compute lag
-- Replica exposes `keyva_replication_lag_seconds` gauge
-- Replica exposes `keyva_replication_lag_entries` gauge
+- Replica exposes `shroudb_replication_lag_seconds` gauge
+- Replica exposes `shroudb_replication_lag_entries` gauge
 
 ### Backpressure
 
@@ -198,11 +198,11 @@ This is the security-critical question.
 
 1. **Accept the window.** Document it. Replication lag = revocation propagation delay. If lag is typically <100ms, this is acceptable for most use cases.
 
-2. **Staleness budget.** Replica refuses VERIFY if `keyva_replication_lag_seconds > max_staleness` (configurable). Fail-closed: return an error rather than a potentially stale answer. Clients retry against the primary.
+2. **Staleness budget.** Replica refuses VERIFY if `shroudb_replication_lag_seconds > max_staleness` (configurable). Fail-closed: return an error rather than a potentially stale answer. Clients retry against the primary.
 
 3. **Revocation forwarding.** On REVOKE, primary pushes a lightweight "revocation hint" to all replicas out-of-band (separate from WAL stream, lower latency). Replicas apply revocation immediately, then receive the full WAL entry later for durability.
 
-**Recommendation:** Start with option 2 (staleness budget). It's simple, fail-closed (consistent with Keyva's failure posture), and requires no new protocol. Option 3 is an optimization for later if the staleness window proves too large.
+**Recommendation:** Start with option 2 (staleness budget). It's simple, fail-closed (consistent with ShrouDB's failure posture), and requires no new protocol. Option 3 is an optimization for later if the staleness window proves too large.
 
 ---
 
@@ -211,8 +211,8 @@ This is the security-critical question.
 ### Manual failover (Phase 5a — build first)
 
 1. Operator stops the primary
-2. Operator identifies the most caught-up replica (lowest `keyva_replication_lag_entries`)
-3. Operator promotes it: `keyva promote --config config.toml`
+2. Operator identifies the most caught-up replica (lowest `shroudb_replication_lag_entries`)
+3. Operator promotes it: `shroudb promote --config config.toml`
 4. Promoted replica starts accepting writes, opens WAL writer
 5. Other replicas reconnect to the new primary
 
@@ -222,11 +222,11 @@ This is the security-critical question.
 
 Requires a consensus mechanism for leader election. Options:
 
-- **External coordinator** (etcd, Consul, ZooKeeper): Keyva nodes register, coordinator manages leases. Simplest, but adds a dependency — violates the single-binary philosophy.
-- **Embedded Raft**: Keyva nodes elect a leader among themselves. No external dependencies, but significant implementation effort and testing surface.
+- **External coordinator** (etcd, Consul, ZooKeeper): ShrouDB nodes register, coordinator manages leases. Simplest, but adds a dependency — violates the single-binary philosophy.
+- **Embedded Raft**: ShrouDB nodes elect a leader among themselves. No external dependencies, but significant implementation effort and testing surface.
 - **Witness-based**: A lightweight witness process (not a full replica) breaks ties. Smaller than full Raft, but still new code.
 
-**Recommendation:** Defer. Manual failover with good operational tooling (`keyva status --replication`, `keyva promote`) covers most deployments. Revisit when there's demand for sub-minute automated recovery.
+**Recommendation:** Defer. Manual failover with good operational tooling (`shroudb status --replication`, `shroudb promote`) covers most deployments. Revisit when there's demand for sub-minute automated recovery.
 
 ---
 
@@ -236,15 +236,15 @@ Requires a consensus mechanism for leader election. Options:
 
 | Metric | Node | Type | Description |
 |--------|------|------|-------------|
-| `keyva_replication_lag_seconds` | replica | gauge | Time since last applied WAL entry |
-| `keyva_replication_lag_entries` | replica | gauge | WAL entries behind primary |
-| `keyva_replication_connected` | replica | gauge | 1 if connected to primary, 0 if not |
-| `keyva_replication_bootstrap_duration_seconds` | replica | gauge | Time spent in last bootstrap |
-| `keyva_replica_count` | primary | gauge | Number of connected replicas |
-| `keyva_replication_bytes_sent_total` | primary | counter | WAL bytes shipped to replicas |
-| `keyva_replication_entries_sent_total` | primary | counter | WAL entries shipped to replicas |
-| `keyva_replica_buffer_depth` | primary | gauge | Per-replica send buffer depth |
-| `keyva_verify_stale_rejected_total` | replica | counter | VERIFYs rejected due to staleness budget |
+| `shroudb_replication_lag_seconds` | replica | gauge | Time since last applied WAL entry |
+| `shroudb_replication_lag_entries` | replica | gauge | WAL entries behind primary |
+| `shroudb_replication_connected` | replica | gauge | 1 if connected to primary, 0 if not |
+| `shroudb_replication_bootstrap_duration_seconds` | replica | gauge | Time spent in last bootstrap |
+| `shroudb_replica_count` | primary | gauge | Number of connected replicas |
+| `shroudb_replication_bytes_sent_total` | primary | counter | WAL bytes shipped to replicas |
+| `shroudb_replication_entries_sent_total` | primary | counter | WAL entries shipped to replicas |
+| `shroudb_replica_buffer_depth` | primary | gauge | Per-replica send buffer depth |
+| `shroudb_verify_stale_rejected_total` | replica | counter | VERIFYs rejected due to staleness budget |
 
 ### HEALTH command on replicas
 

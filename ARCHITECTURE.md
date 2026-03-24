@@ -1,4 +1,4 @@
-# Keyva Architecture
+# ShrouDB Architecture
 
 A concise guide for contributors. See `PROJECT.md` for the full project plan and architectural commitments.
 
@@ -7,34 +7,34 @@ A concise guide for contributors. See `PROJECT.md` for the full project plan and
 ## Crate Map
 
 ```
-keyva (binary)
-├── keyva-core         Data model: Keyspace, Credential, MetaSchema, types
-├── keyva-crypto       All cryptography: AEAD, HKDF, JWT, HMAC, API key hashing
-├── keyva-storage      WAL, snapshots, recovery, key manager, in-memory index
+shroudb (binary)
+├── shroudb-core         Data model: Keyspace, Credential, MetaSchema, types
+├── shroudb-crypto       All cryptography: AEAD, HKDF, JWT, HMAC, API key hashing
+├── shroudb-storage      WAL, snapshots, recovery, key manager, in-memory index
 │   ├── wal/           Write-ahead log (writer, reader, segments, entry format)
 │   ├── snapshot/      Periodic snapshots (writer, reader, format)
 │   └── index/         In-memory indexes (api_key, refresh_token, revocation, signing_key)
-├── keyva-protocol     RESP3 codec, command parsing, dispatch, handlers, auth
+├── shroudb-protocol     RESP3 codec, command parsing, dispatch, handlers, auth
 │   ├── resp3/         Wire format parser/serializer
 │   └── handlers/      One file per command (issue, verify, revoke, rotate, ...)
-├── keyva-rest         Axum HTTP adapter (REST + JWKS + metrics endpoints)
-├── keyva-grpc         Tonic gRPC adapter + Envoy ext_authz/ext_proc
-├── keyva-client       Typed async Rust client library (RESP3 over TCP/TLS)
-├── keyva-cli          Interactive REPL (wraps keyva-client, adds tab completion)
-└── keyva-codegen      SDK client code generator — reads protocol.toml spec and generates typed client stubs for TypeScript, Go, Python, Ruby
+├── shroudb-rest         Axum HTTP adapter (REST + JWKS + metrics endpoints)
+├── shroudb-grpc         Tonic gRPC adapter + Envoy ext_authz/ext_proc
+├── shroudb-client       Typed async Rust client library (RESP3 over TCP/TLS)
+├── shroudb-cli          Interactive REPL (wraps shroudb-client, adds tab completion)
+└── shroudb-codegen      SDK client code generator — reads protocol.toml spec and generates typed client stubs for TypeScript, Go, Python, Ruby
 ```
 
 ### Dependency Graph
 
 ```
-keyva-core  <──  keyva-crypto  <──  keyva-storage  <──  keyva-protocol  <──  keyva (bin)
-                                                    │                    ├──  keyva-rest
-                                                    │                    └──  keyva-grpc
+shroudb-core  <──  shroudb-crypto  <──  shroudb-storage  <──  shroudb-protocol  <──  shroudb (bin)
+                                                    │                    ├──  shroudb-rest
+                                                    │                    └──  shroudb-grpc
                                                     │
-                                          keyva-client  <──  keyva-cli (bin)
+                                          shroudb-client  <──  shroudb-cli (bin)
 ```
 
-`keyva-client` and `keyva-cli` are pure TCP clients. They do NOT depend on `keyva-storage` or `keyva-protocol` — they speak RESP3 over the wire.
+`shroudb-client` and `shroudb-cli` are pure TCP clients. They do NOT depend on `shroudb-storage` or `shroudb-protocol` — they speak RESP3 over the wire.
 
 ---
 
@@ -45,27 +45,27 @@ Client
   │
   │  TCP / TLS
   ▼
-Connection (keyva/src/connection.rs)
+Connection (shroudb/src/connection.rs)
   │
   │  Raw bytes
   ▼
-RESP3 Parser (keyva-protocol/src/resp3/)
+RESP3 Parser (shroudb-protocol/src/resp3/)
   │
   │  Vec<String> args
   ▼
-Command Parser (keyva-protocol/src/command.rs)
+Command Parser (shroudb-protocol/src/command.rs)
   │
   │  Command enum variant
   ▼
-Dispatcher (keyva-protocol/src/dispatch.rs)
+Dispatcher (shroudb-protocol/src/dispatch.rs)
   │
   │  Auth check → replica classification → route
   ▼
-Handler (keyva-protocol/src/handlers/{issue,verify,...}.rs)
+Handler (shroudb-protocol/src/handlers/{issue,verify,...}.rs)
   │
   │  Business logic + validation
   ▼
-Storage Engine (keyva-storage/src/engine.rs)
+Storage Engine (shroudb-storage/src/engine.rs)
   ├──▶ WAL Writer  ──▶  Append entry to segment file (encrypted)
   ├──▶ In-Memory Index  ──▶  Update DashMap-based indexes
   └──▶ Snapshot Writer  ──▶  Periodic full-state dump (encrypted)
@@ -136,8 +136,8 @@ Master Key (32 bytes, from env/file/KMS)
 **Double-layer encryption for private keys**: JWT/HMAC private key material is encrypted with a per-keyspace derived key before being written to the WAL or snapshot. The WAL entry itself is also encrypted. This means private keys are encrypted twice — once at the application layer and once at the storage layer.
 
 **Master key sources** (chained, first success wins):
-1. `KEYVA_MASTER_KEY` environment variable (hex-encoded)
-2. `KEYVA_MASTER_KEY_FILE` file path
+1. `SHROUDB_MASTER_KEY` environment variable (hex-encoded)
+2. `SHROUDB_MASTER_KEY_FILE` file path
 3. Ephemeral (dev mode only — data does not survive restart)
 
 **Tenant context**: Currently hardcoded to `"default"`. Multi-tenant deployments will replace this with a tenant ID. The HKDF derivation chain includes it from day one to avoid re-deriving every key during migration.
@@ -163,9 +163,9 @@ Password keyspaces emit dedicated counters in the verify hot path:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `keyva_password_verify_failed_total` | counter | keyspace | Failed password verifications (invalid password) |
-| `keyva_password_lockout_total` | counter | keyspace | Verify attempts rejected by rate limiter |
-| `keyva_password_rehash_total` | counter | keyspace | Transparent rehashes due to stale hash parameters |
+| `shroudb_password_verify_failed_total` | counter | keyspace | Failed password verifications (invalid password) |
+| `shroudb_password_lockout_total` | counter | keyspace | Verify attempts rejected by rate limiter |
+| `shroudb_password_rehash_total` | counter | keyspace | Transparent rehashes due to stale hash parameters |
 | `config_reloader`     | Hot-reloads config file changes (currently: keyspace `disabled` flag)|
 | `wal_fsync_batcher`   | Flushes pending WAL writes for Batched/Periodic fsync modes          |
 
@@ -175,29 +175,29 @@ Password keyspaces emit dedicated counters in the verify hot path:
 
 ### Adding a New Command
 
-1. Add a variant to `Command` enum in `keyva-protocol/src/command.rs`
-2. Add parsing logic in `keyva-protocol/src/resp3/parse_command.rs`
-3. Create handler file in `keyva-protocol/src/handlers/` (follow existing patterns)
-4. Register the handler in `keyva-protocol/src/handlers/mod.rs`
-5. Wire it into the dispatcher in `keyva-protocol/src/dispatch.rs`
+1. Add a variant to `Command` enum in `shroudb-protocol/src/command.rs`
+2. Add parsing logic in `shroudb-protocol/src/resp3/parse_command.rs`
+3. Create handler file in `shroudb-protocol/src/handlers/` (follow existing patterns)
+4. Register the handler in `shroudb-protocol/src/handlers/mod.rs`
+5. Wire it into the dispatcher in `shroudb-protocol/src/dispatch.rs`
 6. Classify as PureRead/ObservationalRead/WriteOnly in `Command::replica_behavior()`
-7. Add client method in `keyva-client/src/lib.rs`
-8. Add CLI help text in `keyva-cli/src/main.rs`
+7. Add client method in `shroudb-client/src/lib.rs`
+8. Add CLI help text in `shroudb-cli/src/main.rs`
 
 ### Adding a New Keyspace Type
 
-1. Add variant to `KeyspaceType` enum in `keyva-core/src/keyspace_type.rs`
-2. Add variant to `KeyspacePolicy` enum in `keyva-core/src/keyspace.rs`
-3. Add credential type in `keyva-core/src/credential/`
-4. Add index type in `keyva-storage/src/index/`
-5. Add WAL entry serialization in `keyva-storage/src/wal/entry.rs`
-6. Add snapshot serialization in `keyva-storage/src/snapshot/format.rs`
+1. Add variant to `KeyspaceType` enum in `shroudb-core/src/keyspace_type.rs`
+2. Add variant to `KeyspacePolicy` enum in `shroudb-core/src/keyspace.rs`
+3. Add credential type in `shroudb-core/src/credential/`
+4. Add index type in `shroudb-storage/src/index/`
+5. Add WAL entry serialization in `shroudb-storage/src/wal/entry.rs`
+6. Add snapshot serialization in `shroudb-storage/src/snapshot/format.rs`
 7. Update ISSUE/VERIFY/REVOKE handlers to dispatch on the new type
-8. Add config parsing in `keyva/src/config.rs`
+8. Add config parsing in `shroudb/src/config.rs`
 
 ### Adding a New Crypto Algorithm
 
-1. Implement in `keyva-crypto/src/` (follow `jwt.rs` or `hmac.rs` patterns)
-2. Add algorithm variant to the appropriate enum in `keyva-core`
+1. Implement in `shroudb-crypto/src/` (follow `jwt.rs` or `hmac.rs` patterns)
+2. Add algorithm variant to the appropriate enum in `shroudb-core`
 3. Update the relevant handler to support the new algorithm
 4. Ensure key generation, signing, and verification are all covered

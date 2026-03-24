@@ -1,4 +1,4 @@
-# Keyva — Project Plan
+# ShrouDB — Project Plan
 
 **Language:** Rust
 **Target:** Single static binary with RESP3, REST, and gRPC interfaces
@@ -21,33 +21,33 @@ These are constraints imposed by the full vision (managed service, replication, 
 - **Replica key distribution model (document now, build later).** WAL payloads are encrypted per-keyspace. A replica serving reads needs decryption keys for every keyspace it handles. Two options: (a) replicas receive the master key and derive per-keyspace keys independently (simpler, but higher blast radius — compromised replica exposes all keyspaces), or (b) replicas receive only the per-keyspace derived keys they need over a secure channel (more complex distribution, but better tenant isolation). The choice affects whether replica compromise is a full key exposure or a scoped one. **Decision deferred**, but the intended model should be documented before replication is built, because option (b) requires key distribution infrastructure that option (a) does not.
 
 ### Credential Export Readiness
-- **WAL entry format should be documented as a stable format from v1.0.** Even if `EXPORT` isn't built yet, designing the WAL format with the assumption that another Keyva instance will need to read it prevents format decisions that are internally convenient but externally opaque.
+- **WAL entry format should be documented as a stable format from v1.0.** Even if `EXPORT` isn't built yet, designing the WAL format with the assumption that another ShrouDB instance will need to read it prevents format decisions that are internally convenient but externally opaque.
 
 ### Protocol Proxy Architecture
 - **The core binary is a TCP server. REST and gRPC are stateless proxies that connect as clients.** This matches the industry pattern (Upstash: Redis TCP + separate HTTP proxy for serverless; Neon: Postgres TCP + separate WebSocket/HTTP driver; PlanetScale: MySQL TCP + separate HTTP proxy). The benefits are:
   - Core stays lean — one protocol, one process, easy to reason about
-  - Proxies are stateless and horizontally scalable — `docker run keyva-rest` can scale independently
+  - Proxies are stateless and horizontally scalable — `docker run shroudb-rest` can scale independently
   - Proxies can run at the edge (Cloudflare Worker, Lambda) while core runs in a region
   - Independent deployment — upgrade the proxy without restarting the core
   - SDK clients connect over TCP directly (high performance) or through the REST proxy (serverless/edge)
-- **Current state:** `keyva-rest` is compiled in-process and shares `Arc<StorageEngine>` directly. This works and is correct, but couples the REST adapter to the core binary.
-- **Target state:** `keyva-rest` becomes a standalone binary that connects to `keyva` over TCP using the same client protocol as `keyva-cli`. The `keyva` binary optionally embeds the REST proxy for zero-config DX (`cargo run` gives you both ports out of the box). The embedded mode is a convenience, not the production architecture.
+- **Current state:** `shroudb-rest` is compiled in-process and shares `Arc<StorageEngine>` directly. This works and is correct, but couples the REST adapter to the core binary.
+- **Target state:** `shroudb-rest` becomes a standalone binary that connects to `shroudb` over TCP using the same client protocol as `shroudb-cli`. The `shroudb` binary optionally embeds the REST proxy for zero-config DX (`cargo run` gives you both ports out of the box). The embedded mode is a convenience, not the production architecture.
 - **Refactor plan:**
-  1. Extract shared TCP client code from `keyva-cli` into a `keyva-client` crate (Rust client library — also Phase 10)
-  2. Rewrite `keyva-rest` to use `keyva-client` instead of importing `keyva-protocol`/`keyva-storage` directly
-  3. Add `keyva-rest` as a standalone binary target in the workspace
-  4. Keep the embedded mode in `keyva` binary as an option (controlled by config or `--embedded-rest` flag)
-  5. Same approach for `keyva-grpc` — standalone gRPC proxy that connects to keyva over TCP
-- **`keyva-cli` is a client, not a server component.** It connects over TCP like any other client. The server Docker image (`docker run keyva`) does not include the CLI — same as Redis (`docker run redis` doesn't include `redis-cli`) and Postgres (`docker run postgres` doesn't include `psql`). The CLI ships as a separate binary: `brew install keyva-cli`, download from releases, or `docker run keyva-cli`. The workspace builds both, but they're distributed independently.
+  1. Extract shared TCP client code from `shroudb-cli` into a `shroudb-client` crate (Rust client library — also Phase 10)
+  2. Rewrite `shroudb-rest` to use `shroudb-client` instead of importing `shroudb-protocol`/`shroudb-storage` directly
+  3. Add `shroudb-rest` as a standalone binary target in the workspace
+  4. Keep the embedded mode in `shroudb` binary as an option (controlled by config or `--embedded-rest` flag)
+  5. Same approach for `shroudb-grpc` — standalone gRPC proxy that connects to shroudb over TCP
+- **`shroudb-cli` is a client, not a server component.** It connects over TCP like any other client. The server Docker image (`docker run shroudb`) does not include the CLI — same as Redis (`docker run redis` doesn't include `redis-cli`) and Postgres (`docker run postgres` doesn't include `psql`). The CLI ships as a separate binary: `brew install shroudb-cli`, download from releases, or `docker run shroudb-cli`. The workspace builds both, but they're distributed independently.
 - **Repository organization:**
-  - **Main repo (Cargo workspace):** `keyva` (server), `keyva-core`, `keyva-crypto`, `keyva-storage`, `keyva-protocol` (RESP3 codec), `keyva-client` (Rust client library), `keyva-cli` (wraps keyva-client)
-  - **Separate repos:** `keyva-rest` (HTTP proxy, uses keyva-client over TCP), `keyva-grpc` (gRPC proxy, same pattern), TS/Go/Python/Ruby SDK clients (different language ecosystems)
-  - The Rust client stays in the monorepo because it shares `keyva-protocol` types. Proxies and non-Rust clients connect over TCP and don't need Cargo workspace integration.
-- **When to do the REST refactor:** After `keyva-client` is built. Rewrite `keyva-rest` to use `keyva-client` instead of the in-process dispatcher, then move to its own repo. The current in-process architecture works for development and small deployments.
+  - **Main repo (Cargo workspace):** `shroudb` (server), `shroudb-core`, `shroudb-crypto`, `shroudb-storage`, `shroudb-protocol` (RESP3 codec), `shroudb-client` (Rust client library), `shroudb-cli` (wraps shroudb-client)
+  - **Separate repos:** `shroudb-rest` (HTTP proxy, uses shroudb-client over TCP), `shroudb-grpc` (gRPC proxy, same pattern), TS/Go/Python/Ruby SDK clients (different language ecosystems)
+  - The Rust client stays in the monorepo because it shares `shroudb-protocol` types. Proxies and non-Rust clients connect over TCP and don't need Cargo workspace integration.
+- **When to do the REST refactor:** After `shroudb-client` is built. Rewrite `shroudb-rest` to use `shroudb-client` instead of the in-process dispatcher, then move to its own repo. The current in-process architecture works for development and small deployments.
 
 ### System Identity
 
-Keyva is architecturally a **low-latency, append-only, encrypted, multi-tenant data system with strict correctness guarantees**. It is closer to Redis + Vault + Kafka semantics than a typical auth service. All decisions should be made with database kernel discipline:
+ShrouDB is architecturally a **low-latency, append-only, encrypted, multi-tenant data system with strict correctness guarantees**. It is closer to Redis + Vault + Kafka semantics than a typical auth service. All decisions should be made with database kernel discipline:
 
 - **Backward compatibility is real.** WAL format, snapshot format, and wire protocol are contracts. Breaking changes require migration tooling.
 - **Operational failure modes matter more than features.** Recovery, corruption handling, and durability guarantees are tier-1 concerns.
@@ -72,7 +72,7 @@ Commands are classified for replication semantics:
 This is documented in `Command::replica_behavior()`. The classification exists before replication is built so the boundary is clean from day one.
 
 ### Failure Posture
-Keyva is **fail-closed by default.** The system prefers refusing service over serving incorrect results.
+ShrouDB is **fail-closed by default.** The system prefers refusing service over serving incorrect results.
 
 | Failure | Behavior | Rationale |
 |---------|----------|-----------|
@@ -93,19 +93,19 @@ Current rate limiting is per-connection. For multi-tenant deployments, the rate 
 ## Phase 0: Project Scaffolding
 
 - [x] Initialize Cargo workspace with the following crates:
-  - `keyva` — binary entry point, CLI arg parsing, config loading
-  - `keyva-core` — data model, credential types, keyspace logic, state machines
-  - `keyva-storage` — WAL, snapshots, encryption, recovery
-  - `keyva-protocol` — RESP3 parser/serializer, command dispatch
-  - `keyva-rest` — REST/JWKS adapter (axum)
-  - `keyva-auth` — standalone HTTP auth server (signup/login/session/refresh/logout)
-  - `keyva-crypto` — key generation, signing, verification, HMAC, hashing, zeroization
+  - `shroudb` — binary entry point, CLI arg parsing, config loading
+  - `shroudb-core` — data model, credential types, keyspace logic, state machines
+  - `shroudb-storage` — WAL, snapshots, encryption, recovery
+  - `shroudb-protocol` — RESP3 parser/serializer, command dispatch
+  - `shroudb-rest` — REST/JWKS adapter (axum)
+  - `shroudb-auth` — standalone HTTP auth server (signup/login/session/refresh/logout)
+  - `shroudb-crypto` — key generation, signing, verification, HMAC, hashing, zeroization
 - [x] Set up CI (GitHub Actions): `cargo clippy`, `cargo test`, `cargo audit`, `cargo deny`
 - [x] Pin Rust toolchain via `rust-toolchain.toml` (stable, latest)
 - [x] Add `Dockerfile` (multi-stage: builder + distroless/static runtime)
 - [x] Create `config.example.toml` with all keyspace types
 
-> **Crate boundary note:** `keyva-crypto` should have a tight, auditable public surface from day one — this is the one boundary that must be stable early. Other internal crate boundaries will shift as you discover what needs to be shared; don't over-invest in internal API stability between them yet.
+> **Crate boundary note:** `shroudb-crypto` should have a tight, auditable public surface from day one — this is the one boundary that must be stable early. Other internal crate boundaries will shift as you discover what needs to be shared; don't over-invest in internal API stability between them yet.
 
 ---
 
@@ -122,12 +122,12 @@ Current rate limiting is per-connection. For multi-tenant deployments, the rate 
 - [x] Define per-credential structs: `JwtSigningKey`, `ApiKeyEntry`, `HmacKey`, `RefreshTokenEntry`
 - [x] Implement `FamilyId` and parent-chain tracking for refresh tokens
 - [x] Unit tests for every state transition (valid transitions succeed, invalid ones error)
-- [x] Define `MetaSchema` struct in `keyva-core`: holds `enforce` flag + `Vec<FieldDef>`. Stored as an optional field on `Keyspace` — keyspaces without a schema continue to accept freeform metadata.
+- [x] Define `MetaSchema` struct in `shroudb-core`: holds `enforce` flag + `Vec<FieldDef>`. Stored as an optional field on `Keyspace` — keyspaces without a schema continue to accept freeform metadata.
 - [x] Define `FieldDef` struct: field name, type (`String | Integer | Float | Boolean | Array`), `required`, `default`, `enum_values`, `min`, `max`, `immutable`, `items` (element type for arrays — flat only, no nested objects)
 - [x] `MetaSchema::validate(&self, metadata: &serde_json::Value) -> Result<(), Vec<ValidationError>>` — single-pass validation returning all errors, not just the first
 - [x] `MetaSchema::validate_update(&self, existing: &Value, patch: &Value) -> Result<(), Vec<ValidationError>>` — validates the merged result, checks immutable fields against existing values, rejects null on required fields
 
-### 1.2 Cryptographic Primitives (`keyva-crypto`)
+### 1.2 Cryptographic Primitives (`shroudb-crypto`)
 - [x] JWT signing key generation: ES256, ES384, RS256, RS384, RS512, EdDSA (use `ring`)
 - [x] JWT signing and verification (build on `jsonwebtoken` crate — it uses `ring` internally)
 - [x] API key generation: 32-byte CSPRNG + base62 encoding + optional prefix
@@ -147,14 +147,14 @@ Current rate limiting is per-connection. For multi-tenant deployments, the rate 
 ## Phase 2: Storage Layer
 
 ### 2.1 Master Key Management
-- [x] Load from env var (`KEYVA_MASTER_KEY`)
-- [x] Load from file (`KEYVA_MASTER_KEY_FILE`)
+- [x] Load from env var (`SHROUDB_MASTER_KEY`)
+- [x] Load from file (`SHROUDB_MASTER_KEY_FILE`)
 - [—] ~~Load from AWS KMS (envelope decryption, `aws-sdk-kms`)~~ *Won't do — operators inject master key via env var from their existing secret manager (Vault, K8s Secrets, AWS Secrets Manager). Adding KMS SDKs is heavy dependency surface for operational convenience, not security. Revisit when a real user requests a specific provider.*
 - [—] ~~Load from GCP KMS~~ *Won't do — same rationale*
 - [—] ~~Load from Azure Key Vault~~ *Won't do — same rationale*
 - [x] Derive per-keyspace keys via HKDF with tenant context + keyspace name as context
 - [x] Double-layer encryption for private key material (separate derived key from general keyspace key)
-- [x] **Master key rotation tool:** `keyva rekey --old-key <hex> --new-key <hex>` CLI subcommand. Reads all WAL + snapshots, re-encrypts with new key, writes clean snapshot.
+- [x] **Master key rotation tool:** `shroudb rekey --old-key <hex> --new-key <hex>` CLI subcommand. Reads all WAL + snapshots, re-encrypts with new key, writes clean snapshot.
 
 ### 2.2 Encrypted WAL
 - [x] Define WAL entry format: `[len | keyspace_id | op_type | timestamp | encrypted_payload | CRC32]`
@@ -211,7 +211,7 @@ Current rate limiting is per-connection. For multi-tenant deployments, the rate 
 - [x] Separate read commands (VERIFY, INSPECT, JWKS, HEALTH, KEYS, KEYSTATE, SCHEMA) from write commands (ISSUE, UPDATE, REVOKE, ROTATE, REFRESH, SUSPEND, UNSUSPEND) at the dispatch level (replication readiness)
 - [x] Pipeline support: accumulate commands between `PIPELINE`…`END`, execute, return array
 
-> **On the wire protocol:** RESP3 is used as a wire encoding — binary-safe framing, typed responses, and built-in pipelining — via a custom implementation (not the `redis-protocol` crate). Keyva is not Redis and does not aim for Redis client compatibility. RESP3 was chosen because it is a well-established protocol with clean semantics for the types Keyva needs (strings, integers, maps, errors, null), not for any Redis association. The command syntax (`VERB keyspace args...`) is Keyva's own DSL that rides on RESP3 framing.
+> **On the wire protocol:** RESP3 is used as a wire encoding — binary-safe framing, typed responses, and built-in pipelining — via a custom implementation (not the `redis-protocol` crate). ShrouDB is not Redis and does not aim for Redis client compatibility. RESP3 was chosen because it is a well-established protocol with clean semantics for the types ShrouDB needs (strings, integers, maps, errors, null), not for any Redis association. The command syntax (`VERB keyspace args...`) is ShrouDB's own DSL that rides on RESP3 framing.
 
 ### 3.2 Core Commands
 - [x] `ISSUE` — dispatch by keyspace type:
@@ -286,7 +286,7 @@ Current rate limiting is per-connection. For multi-tenant deployments, the rate 
 - [x] Per-connection rate limiting (token bucket, configurable)
 - [x] Auth handshake (token-based, checked against config policies)
 
-### 4.2 REST Adapter (`keyva-rest`)
+### 4.2 REST Adapter (`shroudb-rest`)
 - [x] HTTP server (axum) on configurable port
 - [x] `POST /v1/issue`, `/v1/verify`, `/v1/revoke`, `/v1/refresh`
 - [x] `GET /v1/inspect/{keyspace}/{credential_id}`
@@ -300,14 +300,14 @@ Current rate limiting is per-connection. For multi-tenant deployments, the rate 
 - [x] TLS support *(TCP server has native TLS; REST TLS via reverse proxy — documented in config)*
 - [x] Request/response JSON schema validation *(MetaSchema enforcement on ISSUE/UPDATE)*
 
-### 4.3 gRPC Adapter → [keyva-io/keyva-grpc](https://github.com/keyva-io/keyva-grpc)
+### 4.3 gRPC Adapter → [shroudb/shroudb-grpc](https://github.com/shroudb/shroudb-grpc)
 
-> **Architecture note:** `keyva-grpc` is a standalone stateless proxy that connects to the keyva TCP server as a client — same pattern as `keyva-rest`. Lives in its own repo (same as SDK clients). Removed from the monorepo workspace.
+> **Architecture note:** `shroudb-grpc` is a standalone stateless proxy that connects to the shroudb TCP server as a client — same pattern as `shroudb-rest`. Lives in its own repo (same as SDK clients). Removed from the monorepo workspace.
 
-- [x] Define `.proto` files for all services → [keyva-io/keyva-grpc](https://github.com/keyva-io/keyva-grpc)
-- [x] Implement `Keyva` service (Issue, Verify, Revoke, Refresh, Inspect, Rotate, Health, KeyState, Schema) → keyva-grpc repo
+- [x] Define `.proto` files for all services → [shroudb/shroudb-grpc](https://github.com/shroudb/shroudb-grpc)
+- [x] Implement `ShrouDB` service (Issue, Verify, Revoke, Refresh, Inspect, Rotate, Health, KeyState, Schema) → shroudb-grpc repo
 - [ ] Implement `VerifyStream` — bidirectional streaming for high-throughput verification *(not yet — unary RPCs cover current needs)*
-- [x] Implement `Subscribe` — server-streaming for lifecycle events → keyva-grpc repo
+- [x] Implement `Subscribe` — server-streaming for lifecycle events → shroudb-grpc repo
 - [ ] Envoy `ext_authz` (`Authorization.Check`):
   - Extract credential from configurable header
   - Verify with CHECKREV
@@ -328,7 +328,7 @@ Current rate limiting is per-connection. For multi-tenant deployments, the rate 
 - [x] Validate keyspace definitions at startup (reject invalid combos)
 - [x] Environment variable interpolation in config values (`${VAR}`)
 - [x] Config hot-reload for runtime-tunable values (fsync mode, rate limits)
-- [x] **Keyspace lifecycle:** `disabled = true` per-keyspace config option + `keyva purge <keyspace>` CLI tool
+- [x] **Keyspace lifecycle:** `disabled = true` per-keyspace config option + `shroudb purge <keyspace>` CLI tool
 - [x] **Metadata schema config parsing:** Parse the optional `[keyspaces.<name>.meta_schema]` table into `MetaSchema` at startup. Validate the schema definition itself (e.g., `default` values must match the field type, `enum` values must match the field type, `items` is only valid on array fields, `min`/`max` semantics match the type). Reject invalid schema definitions at startup with clear errors. Schema is not hot-reloadable — changing a schema requires restart (changing a schema on a keyspace with existing credentials that don't conform is a migration problem, not a hot-reload problem). Example config:
 
 ```toml
@@ -358,9 +358,9 @@ default  = "standard"
 enum     = ["standard", "elevated", "unlimited"]
 ```
 
-> **Schema type system is intentionally minimal.** Supported types: `string`, `integer`, `float`, `boolean`, `array` (with `items` for element type — flat only, no nested objects). Constraints per field: `required`, `enum`, `default` (non-required fields only), `min`/`max` (string length, numeric value, or array element count depending on type), `immutable` (cannot be changed via UPDATE once set on ISSUE). This is data integrity, not authorization — Keyva validates structure and type, the consuming application interprets meaning.
+> **Schema type system is intentionally minimal.** Supported types: `string`, `integer`, `float`, `boolean`, `array` (with `items` for element type — flat only, no nested objects). Constraints per field: `required`, `enum`, `default` (non-required fields only), `min`/`max` (string length, numeric value, or array element count depending on type), `immutable` (cannot be changed via UPDATE once set on ISSUE). This is data integrity, not authorization — ShrouDB validates structure and type, the consuming application interprets meaning.
 
-> **`enforce = false` behavior and migration path.** The spec describes `enforce = false` as "validate but warn." **The current implementation does neither** — when `enforce = false`, the ISSUE and UPDATE handlers skip validation entirely and accept metadata as-is. No `tracing::warn!()` is emitted, no validation errors are logged. This is a known gap between spec and implementation: the validate-and-warn path was never built. To make `enforce = false` useful as a migration tool, the handlers should call `schema.validate()` and log warnings via structured logging without rejecting the request. **Transitioning from `enforce = false` to `enforce = true`** on a keyspace with existing non-conforming credentials: Keyva does not currently offer a validation scan command against existing credentials. Operators should audit existing credentials via `KEYS` + `INSPECT` before flipping the flag. A future `SCHEMA VALIDATE <keyspace>` command that scans all credentials and reports violations without rejecting anything would make this migration safer — deferred until a real operator hits this workflow.
+> **`enforce = false` behavior and migration path.** The spec describes `enforce = false` as "validate but warn." **The current implementation does neither** — when `enforce = false`, the ISSUE and UPDATE handlers skip validation entirely and accept metadata as-is. No `tracing::warn!()` is emitted, no validation errors are logged. This is a known gap between spec and implementation: the validate-and-warn path was never built. To make `enforce = false` useful as a migration tool, the handlers should call `schema.validate()` and log warnings via structured logging without rejecting the request. **Transitioning from `enforce = false` to `enforce = true`** on a keyspace with existing non-conforming credentials: ShrouDB does not currently offer a validation scan command against existing credentials. Operators should audit existing credentials via `KEYS` + `INSPECT` before flipping the flag. A future `SCHEMA VALIDATE <keyspace>` command that scans all credentials and reports violations without rejecting anything would make this migration safer — deferred until a real operator hits this workflow.
 
 ### 5.2 Background Schedulers
 - [x] Key rotation scheduler: check all JWT/HMAC keyspaces on interval
@@ -413,9 +413,9 @@ enum     = ["standard", "elevated", "unlimited"]
 
 ---
 
-## Keyva Auth — Standalone Auth Server (`keyva-auth`)
+## ShrouDB Auth — Standalone Auth Server (`shroudb-auth`)
 
-> **Purpose:** Composes Keyva primitives (password hashing, JWT, refresh tokens) into turnkey HTTP auth flows. `docker run keyva-auth` and your app has users. Any stack, no library lock-in.
+> **Purpose:** Composes ShrouDB primitives (password hashing, JWT, refresh tokens) into turnkey HTTP auth flows. `docker run shroudb-auth` and your app has users. Any stack, no library lock-in.
 
 ### Phase 1: Core Flows (complete)
 - [x] Signup — `POST /auth/{ks}/signup` → PasswordSet + Issue JWT + Issue refresh token + cookies
@@ -483,36 +483,36 @@ enum     = ["standard", "elevated", "unlimited"]
 - [x] Fuzzing: RESP3 parser, config parser, WAL entry parser (`cargo-fuzz`) *(3 fuzz targets in fuzz/ directory — run manually with `cargo +nightly fuzz run <target>`)*
 - [x] `cargo audit` in CI for dependency vulnerabilities
 - [x] `unsafe` audit: documented in UNSAFE_AUDIT.md (3 production, 9 test-only)
-- [x] Load testing: verify throughput targets *(1000 ops in <10s — `cargo test -p keyva --test load_test -- --ignored`)*
-- [x] Memory leak testing under sustained load *(2000 ops smoke test — `cargo test -p keyva --test memory_test -- --ignored`)*
+- [x] Load testing: verify throughput targets *(1000 ops in <10s — `cargo test -p shroudb --test load_test -- --ignored`)*
+- [x] Memory leak testing under sustained load *(2000 ops smoke test — `cargo test -p shroudb --test memory_test -- --ignored`)*
 
 ---
 
 ## Phase 9: Packaging & Distribution
 
 - [x] Multi-stage Dockerfile (static musl binary + scratch/distroless)
-- [x] Docker Compose example (Keyva + persistent volume)
+- [x] Docker Compose example (ShrouDB + persistent volume)
 - [x] Helm chart for Kubernetes
 - [x] systemd unit file for bare-metal
 - [x] Binary releases for Linux (x86_64, aarch64), macOS (aarch64) via CI
 - [x] `config.example.toml` with all options documented
-- [x] **Credential export/import:** `keyva export <keyspace> --output <file>` and `keyva import --file <path> --keyspace <name>`. Encrypted portable bundles with HMAC integrity.
+- [x] **Credential export/import:** `shroudb export <keyspace> --output <file>` and `shroudb import --file <path> --keyspace <name>`. Encrypted portable bundles with HMAC integrity.
 
 ---
 
 ## Developer Experience
 
-RESP3 is an implementation detail. Developers should never need to know or care about the wire protocol — they interact with Keyva through client libraries, the REST API, or `keyva-cli`. The goal is `docker run keyva` and you're up.
+RESP3 is an implementation detail. Developers should never need to know or care about the wire protocol — they interact with ShrouDB through client libraries, the REST API, or `shroudb-cli`. The goal is `docker run shroudb` and you're up.
 
 ### Zero-Config Development Mode
-- [x] **Sane defaults without a config file.** If no `--config` is provided (or the file doesn't exist), Keyva starts with:
+- [x] **Sane defaults without a config file.** If no `--config` is provided (or the file doesn't exist), ShrouDB starts with:
   - Bind `0.0.0.0:6399` (command protocol) + `0.0.0.0:8080` (REST)
-  - Generate an **ephemeral master key** (random, in-memory only) with a loud startup warning: `"⚠ using ephemeral master key — data will not survive restart. Set KEYVA_MASTER_KEY for persistence."`
+  - Generate an **ephemeral master key** (random, in-memory only) with a loud startup warning: `"⚠ using ephemeral master key — data will not survive restart. Set SHROUDB_MASTER_KEY for persistence."`
   - Data directory `./data`
   - No TLS, no auth
   - No keyspaces (create them at runtime via commands or REST)
-  - This is `docker run keyva` behavior — instant usability with no ceremony.
-- [x] **Environment-driven configuration.** Every config field overridable via env var (`KEYVA_BIND`, `KEYVA_REST_BIND`, `KEYVA_DATA_DIR`, `KEYVA_MASTER_KEY`) using `${VAR}` in TOML. Env vars take precedence over the config file. Follows the 12-factor app pattern. For Docker: `docker run -e KEYVA_MASTER_KEY=... keyva` is the production path.
+  - This is `docker run shroudb` behavior — instant usability with no ceremony.
+- [x] **Environment-driven configuration.** Every config field overridable via env var (`SHROUDB_BIND`, `SHROUDB_REST_BIND`, `SHROUDB_DATA_DIR`, `SHROUDB_MASTER_KEY`) using `${VAR}` in TOML. Env vars take precedence over the config file. Follows the 12-factor app pattern. For Docker: `docker run -e SHROUDB_MASTER_KEY=... shroudb` is the production path.
 - [x] **Simplified config surface.** Rename `resp3_bind` → `bind` (the primary protocol is the default, not a qualified variant). TLS, Unix sockets, and protocol-specific options are nested under `[server.tls]`, `[server.unix]` — not top-level fields. Example:
   ```toml
   bind = "0.0.0.0:6399"
@@ -525,36 +525,36 @@ RESP3 is an implementation detail. Developers should never need to know or care 
   ```
   The current `resp3_bind` / `rest_bind` / `grpc_bind` naming leaks implementation details into the operator's mental model.
 
-### `keyva-cli` — Purpose-Built CLI
-- [x] Interactive REPL for Keyva commands. Not redis-cli — a first-class tool that understands the Keyva DSL.
-- [x] Connects to `localhost:6399` by default. `keyva-cli --host <addr> --port <port>` for remote. `keyva-cli --tls` for TLS connections using system root certs.
+### `shroudb-cli` — Purpose-Built CLI
+- [x] Interactive REPL for ShrouDB commands. Not redis-cli — a first-class tool that understands the ShrouDB DSL.
+- [x] Connects to `localhost:6399` by default. `shroudb-cli --host <addr> --port <port>` for remote. `shroudb-cli --tls` for TLS connections using system root certs.
 - [x] Human-readable output by default. `--raw` for RESP3 wire format. `--json` for JSON output.
 - [x] Built-in help: `help <command>` shows syntax, args, examples for all 15+ commands.
 - [x] Tab completion for commands and keyspace names.
-- [x] Ships in the same binary or as a subcommand: `keyva cli` or `keyva-cli` (separate binary in the workspace).
-- [x] Move ahead of the client libraries in the build order — `keyva-cli` is needed for testing and demos before any SDK.
+- [x] Ships in the same binary or as a subcommand: `shroudb cli` or `shroudb-cli` (separate binary in the workspace).
+- [x] Move ahead of the client libraries in the build order — `shroudb-cli` is needed for testing and demos before any SDK.
 
-> **Why not redis-cli?** redis-cli works for sending raw commands, but it doesn't understand Keyva's command syntax, can't display keyspace-aware help, and forces developers to think in terms of RESP3 arrays. `keyva-cli` is the face of the product — the first thing a developer touches after `docker run`. It should be polished.
+> **Why not redis-cli?** redis-cli works for sending raw commands, but it doesn't understand ShrouDB's command syntax, can't display keyspace-aware help, and forces developers to think in terms of RESP3 arrays. `shroudb-cli` is the face of the product — the first thing a developer touches after `docker run`. It should be polished.
 
 ### Docker First-Run Experience
-- [x] `docker run keyva` — starts with ephemeral key, binds both ports, human-readable logs. Dockerfile tested.
-- [x] `docker run keyva --help` — shows all CLI flags
-- [x] Docker Compose example (Keyva + persistent volume)
+- [x] `docker run shroudb` — starts with ephemeral key, binds both ports, human-readable logs. Dockerfile tested.
+- [x] `docker run shroudb --help` — shows all CLI flags
+- [x] Docker Compose example (ShrouDB + persistent volume)
 - [x] README quick-start: 3 commands from zero to issuing a JWT
 
 ---
 
 ## Phase 10: Client Libraries
 
-- [x] `keyva-cli` — interactive REPL + scripting CLI (see Developer Experience section above). Build before SDK libraries — needed for testing and demos.
+- [x] `shroudb-cli` — interactive REPL + scripting CLI (see Developer Experience section above). Build before SDK libraries — needed for testing and demos.
 - [x] Rust client (dogfood — also used internally for integration tests)
-- [x] TypeScript/Node.js client → [keyva-io/keyva-ts](https://github.com/keyva-io/keyva-ts)
-- [x] Go client → [keyva-io/keyva-go](https://github.com/keyva-io/keyva-go)
-- [x] Python client → [keyva-io/keyva-py](https://github.com/keyva-io/keyva-py)
-- [x] Ruby client → [keyva-io/keyva-rb](https://github.com/keyva-io/keyva-rb)
+- [x] TypeScript/Node.js client → [shroudb/shroudb-ts](https://github.com/shroudb/shroudb-ts)
+- [x] Go client → [shroudb/shroudb-go](https://github.com/shroudb/shroudb-go)
+- [x] Python client → [shroudb/shroudb-py](https://github.com/shroudb/shroudb-py)
+- [x] Ruby client → [shroudb/shroudb-rb](https://github.com/shroudb/shroudb-rb)
 - [x] Each client: connection management, pipelining, typed responses, pub/sub, health checks
 
-> Client libraries are intentionally thin — 100–300 lines each. RESP3 framing is handled internally by the client. Developers never see RESP3 — they call `keyva.issue("auth-tokens", claims)` and get back a typed response. Clients don't contain crypto, caching, or rotation logic.
+> Client libraries are intentionally thin — 100–300 lines each. RESP3 framing is handled internally by the client. Developers never see RESP3 — they call `shroudb.issue("auth-tokens", claims)` and get back a typed response. Clients don't contain crypto, caching, or rotation logic.
 
 ---
 
@@ -585,7 +585,7 @@ The managed service wraps the same core binary with multi-tenancy, usage meterin
 ### Control Plane
 - Web dashboard: keyspace creation/configuration, rotation status/history, credential counts/usage, audit log viewer, alert configuration
 - The control plane manages configuration and observability only — it does not handle the data path
-- All VERIFY, ISSUE, REVOKE operations hit the Keyva data plane directly
+- All VERIFY, ISSUE, REVOKE operations hit the ShrouDB data plane directly
 - Programmatic keyspace creation via API (enabled by the runtime config data structure, not TOML-coupled)
 
 ### Replication (for HA deployments)
@@ -603,12 +603,12 @@ The phases above are roughly ordered by dependency. Within a milestone, here is 
 1. **Crypto + Data Model** (Phase 1) — everything depends on this
 2. **Storage WAL + Recovery** (Phase 2.1, 2.2, 2.4, 2.5) — need durability before commands
 3. **Core Commands over RESP3** (Phase 3.1, 3.2 + Phase 4.1) — first usable system
-4. **`keyva-cli` + zero-config defaults** (DX section) — testable, demo-able system
+4. **`shroudb-cli` + zero-config defaults** (DX section) — testable, demo-able system
 5. **REST adapter + JWKS** (Phase 4.2) — needed for real JWT consumers
 6. **Rotation lifecycle + schedulers** (Phase 3.3, 5.2) — completes JWT/HMAC story
 7. **Snapshots + compaction** (Phase 2.3) — required before production use
 8. **gRPC proxy** (Phase 4.3) — separate repo, unlocks infrastructure integration
-9. **Keyva Auth** (standalone auth server) — composed auth flows for app developers
+9. **ShrouDB Auth** (standalone auth server) — composed auth flows for app developers
 10. **Everything else** (access control, observability polish, webhooks, remaining clients)
 
 ---
@@ -623,7 +623,7 @@ These are decisions that will be painful to change later. Make them deliberately
 | **Async runtime** | tokio (multi-threaded) | Every network crate in the plan (axum, tonic, rustls) assumes tokio. |
 | **Serialization for WAL/snapshots** | `postcard` (binary, encrypted payloads) | Compact varint encoding via `postcard` crate. Enabled by replacing `serde_json::Value` metadata with typed `MetadataValue` enum. Previous attempts with `bincode` (unmaintained, RUSTSEC-2025-0141) and `bitcode` (panics on `deserialize_any`) failed because `serde_json::Value` is incompatible with all schema-driven binary formats. |
 | **In-memory map for API keys** | `DashMap` (sharded concurrent map) | The hot path. Needs lock-free reads. SHA-256 hashes are uniform by definition so shard distribution should be even — verify under load. |
-| **JWT clock leeway** | Configurable, default 30s | Without this, clock skew between Keyva and the issuing service causes spurious DENIED responses. Bake it in from the start. |
+| **JWT clock leeway** | Configurable, default 30s | Without this, clock skew between ShrouDB and the issuing service causes spurious DENIED responses. Bake it in from the start. |
 | **WAL entry envelope** | Fixed header (len + keyspace + op + timestamp + CRC) + encrypted payload | Header must be readable without decryption so recovery can validate/skip corrupt entries without the payload key. CRC covers the encrypted payload bytes. |
 | **RESP3 response convention** | Every success: RESP3 map with `status` key + command-specific fields. Every error: RESP3 error with machine-parseable code prefix. | This is the contract between the command engine and every client library. If each command invents its own response shape, clients become painful to write. |
 | **HKDF context format** | `"{tenant_context}:{keyspace_name}"` with tenant hardcoded to `"default"` | Costs one extra string parameter now. Without it, multi-tenancy requires re-deriving every key. |
@@ -634,7 +634,7 @@ These are decisions that will be painful to change later. Make them deliberately
 
 ### Security & Operational
 
-1. **Key ceremony / master key rotation.** Addressed in Phase 2.1 as the `keyva rekey` CLI tool. Offline operation requiring quiesce. Design should anticipate KMS sources for both old and new keys.
+1. **Key ceremony / master key rotation.** Addressed in Phase 2.1 as the `shroudb rekey` CLI tool. Offline operation requiring quiesce. Design should anticipate KMS sources for both old and new keys.
 
 2. **Graceful shutdown and drain.** Addressed in Phase 2.2. SIGTERM → stop accepting → drain in-flight → flush batched WAL → fsync → exit. Especially critical for batched/periodic fsync modes.
 
@@ -660,11 +660,11 @@ These are decisions that will be painful to change later. Make them deliberately
 
 12. **API key scoping by IP/CIDR.** Deferred. Requires structured metadata (not opaque), source IP threading through the command protocol, and a new failure mode. Operators who need this today can store CIDRs in the metadata map and check in their application layer. Revisit after core is stable — implementation would touch Phase 3.2 (VERIFY accepts optional `SOURCE_IP`) and Phase 4 (REST/gRPC adapters extract and forward client IP).
 
-13. **Credential export for migration.** Addressed in Phase 9 as `EXPORT` command + `keyva import` CLI tool. WAL format designed in Phase 2 already anticipates this per the Architectural Commitments.
+13. **Credential export for migration.** Addressed in Phase 9 as `EXPORT` command + `shroudb import` CLI tool. WAL format designed in Phase 2 already anticipates this per the Architectural Commitments.
 
 14. **Read replicas / replication.** Addressed architecturally in the Managed Service section and the Architectural Commitments (read/write dispatch separation in Phase 3.1).
 
-15. **Keyspace lifecycle management.** Addressed in Phase 5.1. `disabled = true` config option for soft decommission, `keyva purge` CLI tool for destructive deletion.
+15. **Keyspace lifecycle management.** Addressed in Phase 5.1. `disabled = true` config option for soft decommission, `shroudb purge` CLI tool for destructive deletion.
 
 16. **Rate limiting per credential, not just per connection.** Full per-credential rate limiting deferred (requires a second hot-path data structure with its own storage/eviction). `last_verified_at` timestamp tracking on API key VERIFY added to Phase 3.2 as a cheap signal — updated in-memory on every successful verification, gives operators enough data to detect abuse in their own monitoring.
 
@@ -695,8 +695,8 @@ The system is architecturally complete. The remaining risk is not technical — 
 - Whether the WAL format decisions hold under multi-region replication
 
 ### What to do next
-1. **Put Keyva behind one real service.** Issue real JWTs, verify real API keys, rotate real signing keys. The integration tests prove correctness; usage proves relevance.
-2. **Expose to 2-3 external users.** Let them hit the REST API and `keyva-cli`. Watch what they struggle with, what they ignore, and what they ask for that doesn't exist.
+1. **Put ShrouDB behind one real service.** Issue real JWTs, verify real API keys, rotate real signing keys. The integration tests prove correctness; usage proves relevance.
+2. **Expose to 2-3 external users.** Let them hit the REST API and `shroudb-cli`. Watch what they struggle with, what they ignore, and what they ask for that doesn't exist.
 3. **Instrument aggressively.** The Prometheus metrics are in place. Use them. Track VERIFY latency percentiles, ISSUE rates per keyspace, rotation frequency, WAL segment sizes.
 4. **Resist adding features.** Every new feature adds WAL format surface area. The next features should come from usage feedback, not architecture planning.
 5. **Maintain error message quality.** A design review flagged error messages as a potential gap, but the implementation is already strong. Error messages are structured (`CODE key=value` format), specific (`BADARG missing required argument: keyspace`, `DENIED command VERIFY not allowed by policy 'read-only'`, `WRONGTYPE keyspace=sessions type=ApiKey expected=refresh_token`), and include context that aids debugging (entity types, IDs, expected vs. actual values, parse errors). The main weakness is occasional opacity in INTERNAL errors for system-level failures, which is acceptable. Watch for regressions as new commands are added.
@@ -730,4 +730,4 @@ The reviewer worked from the spec only, without codebase access. Each recommenda
 
 4. **Idempotency key 5-minute TTL scope.** Reviewer correctly noted the TTL won't cover longer-lived idempotency needs. **Verified and expanded:** The TTL is hardcoded at 300 seconds in `dispatch.rs:28` (not configurable). The dedup map is a global `HashMap<String, (Instant, ResponseMap)>` behind a `tokio::sync::Mutex`, shared across all connections and keyspaces. The `idempotency_key` is also persisted to WAL entries as `request_id`, enabling future crash-recovery deduplication — a detail the reviewer couldn't see. → *Clarified in Phase 3.2 ISSUE.*
 
-5. **Error message quality.** Reviewer predicted the first integration would reveal error message gaps. **Verified: this concern was premature.** Error messages are already specific and actionable — `BADARG missing required argument: keyspace`, `DENIED command VERIFY not allowed by policy 'read-only'`, `WRONGTYPE keyspace=sessions type=ApiKey expected=refresh_token`, `CHAIN_LIMIT family=fam-123 limit=5`. Each error type carries structured context (entity+ID, expected vs. actual, state transitions). HTTP status code mapping in `keyva-rest` is also correct (400/403/404/410/422/503). The main weakness is INTERNAL errors for system-level failures, which is acceptable. → *Reframed as "maintain quality" rather than "invest in quality" in What's Next.*
+5. **Error message quality.** Reviewer predicted the first integration would reveal error message gaps. **Verified: this concern was premature.** Error messages are already specific and actionable — `BADARG missing required argument: keyspace`, `DENIED command VERIFY not allowed by policy 'read-only'`, `WRONGTYPE keyspace=sessions type=ApiKey expected=refresh_token`, `CHAIN_LIMIT family=fam-123 limit=5`. Each error type carries structured context (entity+ID, expected vs. actual, state transitions). HTTP status code mapping in `shroudb-rest` is also correct (400/403/404/410/422/503). The main weakness is INTERNAL errors for system-level failures, which is acceptable. → *Reframed as "maintain quality" rather than "invest in quality" in What's Next.*

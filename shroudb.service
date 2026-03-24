@@ -1,0 +1,41 @@
+[Unit]
+Description=ShrouDB Credential Management Server
+Documentation=https://github.com/shroudb/shroudb
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shroudb
+Group=shroudb
+ExecStart=/usr/local/bin/shroudb --config /etc/shroudb/config.toml
+Restart=on-failure
+RestartSec=5
+
+# Master key via environment file (must be 0600 owned by root)
+EnvironmentFile=-/etc/shroudb/env
+
+# Working directory for default data path
+WorkingDirectory=/var/lib/shroudb
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/shroudb
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+
+# Allow mlock for secret memory pinning
+LimitMEMLOCK=67108864
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

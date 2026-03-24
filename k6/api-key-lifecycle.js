@@ -1,14 +1,14 @@
 // k6 scenario: API key full lifecycle
 // Run: k6 run k6/api-key-lifecycle.js
 //
-// Requires Keyva running with an "api-keys" keyspace:
+// Requires ShrouDB running with an "api-keys" keyspace:
 //   cargo run -- --config config.example.toml
 
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Trend } from "k6/metrics";
 
-const BASE = __ENV.KEYVA_REST_URL || "http://localhost:8080";
+const BASE = __ENV.SHROUDB_REST_URL || "http://localhost:8080";
 
 const issueErrors = new Rate("issue_errors");
 const verifyErrors = new Rate("verify_errors");

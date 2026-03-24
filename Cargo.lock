@@ -1041,144 +1041,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyva"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "hex",
- "keyva-core",
- "keyva-crypto",
- "keyva-protocol",
- "keyva-storage",
- "libc",
- "metrics",
- "metrics-exporter-prometheus",
- "postcard",
- "ring",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-rustls",
- "toml",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "keyva-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "keyva-client",
- "rustyline",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "keyva-client"
-version = "0.1.0"
-dependencies = [
- "libc",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-rustls",
-]
-
-[[package]]
-name = "keyva-codegen"
-version = "0.1.0"
-dependencies = [
- "clap",
- "heck",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "keyva-core"
-version = "0.1.0"
-dependencies = [
- "keyva-crypto",
- "serde",
- "serde_json",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "keyva-crypto"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "base62",
- "base64",
- "bcrypt",
- "jsonwebtoken",
- "libc",
- "password-hash",
- "rand 0.8.5",
- "ring",
- "rsa",
- "scrypt",
- "serde",
- "serde_json",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
-name = "keyva-protocol"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "dashmap",
- "hex",
- "keyva-core",
- "keyva-crypto",
- "keyva-storage",
- "metrics",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "keyva-storage"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "dashmap",
- "hex",
- "keyva-core",
- "keyva-crypto",
- "metrics",
- "postcard",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2140,6 +2002,144 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "shroudb"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "libc",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "postcard",
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "shroudb-core",
+ "shroudb-crypto",
+ "shroudb-protocol",
+ "shroudb-storage",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "shroudb-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rustyline",
+ "serde_json",
+ "shroudb-client",
+ "tokio",
+]
+
+[[package]]
+name = "shroudb-client"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
+name = "shroudb-codegen"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "heck",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "shroudb-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shroudb-crypto",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "shroudb-crypto"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "base62",
+ "base64",
+ "bcrypt",
+ "jsonwebtoken",
+ "libc",
+ "password-hash",
+ "rand 0.8.5",
+ "ring",
+ "rsa",
+ "scrypt",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zeroize",
+]
+
+[[package]]
+name = "shroudb-protocol"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "dashmap",
+ "hex",
+ "metrics",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "shroudb-core",
+ "shroudb-crypto",
+ "shroudb-storage",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "shroudb-storage"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "dashmap",
+ "hex",
+ "metrics",
+ "postcard",
+ "serde",
+ "serde_json",
+ "shroudb-core",
+ "shroudb-crypto",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
 
 [[package]]
 name = "signal-hook-registry"

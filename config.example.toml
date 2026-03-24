@@ -1,9 +1,9 @@
-# Keyva Configuration
+# ShrouDB Configuration
 # Copy to config.toml and adjust for your deployment.
 
 # Master key source (choose one)
-# master_key_source = "env"           # reads KEYVA_MASTER_KEY
-# master_key_source = "file"          # reads KEYVA_MASTER_KEY_FILE
+# master_key_source = "env"           # reads SHROUDB_MASTER_KEY
+# master_key_source = "file"          # reads SHROUDB_MASTER_KEY_FILE
 # master_key_source = "aws-kms"       # envelope decryption via AWS KMS
 # master_key_source = "gcp-kms"       # envelope decryption via GCP KMS
 
@@ -12,7 +12,7 @@ bind = "0.0.0.0:6399"
 # tls_cert = "/path/to/cert.pem"
 # tls_key = "/path/to/key.pem"
 # tls_client_ca = "/path/to/ca.pem"  # Enable mTLS (require client certificates)
-# unix_socket = "/var/run/keyva.sock"
+# unix_socket = "/var/run/shroudb.sock"
 
 # REST API — runs on a separate port. TLS for REST should be handled by a
 # reverse proxy (nginx, Caddy, cloud LB) in production. The RESP3 protocol
@@ -93,11 +93,11 @@ lockout_duration = "15m"
 # method = "token"       # "token" or "none"
 #
 # [auth.policies.admin]
-# token = "${KEYVA_ADMIN_TOKEN}"
+# token = "${SHROUDB_ADMIN_TOKEN}"
 # keyspaces = ["*"]
 # commands = ["*"]
 #
 # [auth.policies.reader]
-# token = "${KEYVA_READER_TOKEN}"
+# token = "${SHROUDB_READER_TOKEN}"
 # keyspaces = ["auth-tokens", "service-keys"]
 # commands = ["VERIFY", "INSPECT", "JWKS", "HEALTH", "KEYS"]

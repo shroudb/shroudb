@@ -1,16 +1,16 @@
 services:
-  keyva:
-    image: ghcr.io/keyva-io/keyva:latest
+  shroudb:
+    image: ghcr.io/shroudb/shroudb:latest
     ports:
       - "6399:6399"
     environment:
-      - KEYVA_MASTER_KEY=${KEYVA_MASTER_KEY:?Set KEYVA_MASTER_KEY (64 hex chars)}
+      - SHROUDB_MASTER_KEY=${SHROUDB_MASTER_KEY:?Set SHROUDB_MASTER_KEY (64 hex chars)}
       - RUST_LOG=info
     volumes:
-      - keyva-data:/data
+      - shroudb-data:/data
       - ./config.example.toml:/config.toml:ro
     command: ["--config", "/config.toml"]
     restart: unless-stopped
 
 volumes:
-  keyva-data:
+  shroudb-data:

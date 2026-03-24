@@ -9,6 +9,6 @@ fuzz_target!(|data: &[u8]| {
     rt.block_on(async {
         // &[u8] implements tokio::io::AsyncRead
         let mut reader = tokio::io::BufReader::new(data);
-        let _ = keyva_protocol::resp3::reader::read_frame(&mut reader).await;
+        let _ = shroudb_protocol::resp3::reader::read_frame(&mut reader).await;
     });
 });

@@ -8,8 +8,8 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { Rate, Counter } from "k6/metrics";
 
-const BASE = __ENV.KEYVA_REST_URL || "http://localhost:8080";
-const KEYSPACE = __ENV.KEYVA_KEYSPACE || "sessions";
+const BASE = __ENV.SHROUDB_REST_URL || "http://localhost:8080";
+const KEYSPACE = __ENV.SHROUDB_KEYSPACE || "sessions";
 
 const refreshErrors = new Rate("refresh_errors");
 const reuseDetections = new Counter("reuse_detections");

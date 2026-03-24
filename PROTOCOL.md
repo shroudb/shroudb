@@ -1,6 +1,6 @@
-# Keyva Command Protocol Specification
+# ShrouDB Command Protocol Specification
 
-This document defines the wire protocol and command set for Keyva. SDK authors should use this as the reference for building client libraries.
+This document defines the wire protocol and command set for ShrouDB. SDK authors should use this as the reference for building client libraries.
 
 ---
 
@@ -9,19 +9,19 @@ This document defines the wire protocol and command set for Keyva. SDK authors s
 ### URI Scheme
 
 ```
-keyva://[token@]host[:port][/keyspace]
-keyva+tls://[token@]host[:port][/keyspace]
+shroudb://[token@]host[:port][/keyspace]
+shroudb+tls://[token@]host[:port][/keyspace]
 ```
 
 **Examples:**
 
 ```
-keyva://localhost                     # plain TCP, default port 6399
-keyva://localhost:6399                # explicit port
-keyva+tls://prod.example.com         # TLS, default port 6399
-keyva://mytoken@localhost:6399       # with auth token
-keyva://mytoken@localhost/sessions   # with auth and default keyspace
-keyva+tls://tok@host:6399/keys      # full form
+shroudb://localhost                     # plain TCP, default port 6399
+shroudb://localhost:6399                # explicit port
+shroudb+tls://prod.example.com         # TLS, default port 6399
+shroudb://mytoken@localhost:6399       # with auth token
+shroudb://mytoken@localhost/sessions   # with auth and default keyspace
+shroudb+tls://tok@host:6399/keys      # full form
 ```
 
 ### Default Port
@@ -36,7 +36,7 @@ Plain TCP or TLS. The server advertises TLS support via the `tls_cert` and `tls_
 
 ## Wire Format
 
-Keyva uses a **RESP3 subset** as its wire format. RESP3 was chosen because it is a well-established, binary-safe framing protocol with clean semantics for strings, integers, maps, and errors — not because Keyva is related to Redis. Keyva has its own command set (ISSUE, VERIFY, REVOKE, ROTATE, etc.) and is not compatible with Redis clients. SDK authors should implement RESP3 framing directly (it is a simple protocol) or use a standalone RESP3 codec library.
+ShrouDB uses a **RESP3 subset** as its wire format. RESP3 was chosen because it is a well-established, binary-safe framing protocol with clean semantics for strings, integers, maps, and errors — not because ShrouDB is related to Redis. ShrouDB has its own command set (ISSUE, VERIFY, REVOKE, ROTATE, etc.) and is not compatible with Redis clients. SDK authors should implement RESP3 framing directly (it is a simple protocol) or use a standalone RESP3 codec library.
 
 ### Supported Types (7)
 

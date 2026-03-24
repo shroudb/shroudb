@@ -8,17 +8,17 @@ COPY . .
 RUN rustup target add x86_64-unknown-linux-musl
 
 RUN cargo build --release --target x86_64-unknown-linux-musl \
-    -p keyva -p keyva-cli
+    -p shroudb -p shroudb-cli
 
-# --- keyva: credential management server ---
-FROM gcr.io/distroless/static-debian12:nonroot AS keyva
-COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/keyva /keyva
+# --- shroudb: credential management server ---
+FROM gcr.io/distroless/static-debian12:nonroot AS shroudb
+COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/shroudb /shroudb
 USER nonroot:nonroot
 EXPOSE 6399
-ENTRYPOINT ["/keyva"]
+ENTRYPOINT ["/shroudb"]
 
-# --- keyva-cli: command-line client ---
-FROM gcr.io/distroless/static-debian12:nonroot AS keyva-cli
-COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/keyva-cli /keyva-cli
+# --- shroudb-cli: command-line client ---
+FROM gcr.io/distroless/static-debian12:nonroot AS shroudb-cli
+COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/shroudb-cli /shroudb-cli
 USER nonroot:nonroot
-ENTRYPOINT ["/keyva-cli"]
+ENTRYPOINT ["/shroudb-cli"]

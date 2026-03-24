@@ -1,16 +1,16 @@
-# Keyva Protocol Specification
+# ShrouDB Protocol Specification
 #
-# Machine-readable definition of the Keyva protocol.
-# Used by keyva-codegen to generate typed client libraries in any language.
+# Machine-readable definition of the ShrouDB protocol.
+# Used by shroudb-codegen to generate typed client libraries in any language.
 #
-# Analogous to an OpenAPI spec, but for Keyva's command protocol.
+# Analogous to an OpenAPI spec, but for ShrouDB's command protocol.
 
 [protocol]
-name = "keyva"
+name = "shroudb"
 version = "0.1.0"
 description = "Credential management server"
 default_port = 6399
-uri_schemes = ["keyva://", "keyva+tls://"]
+uri_schemes = ["shroudb://", "shroudb+tls://"]
 uri_format = "{scheme}[token@]host[:port][/keyspace]"
 
 [protocol.wire_format]
