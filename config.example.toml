@@ -14,10 +14,12 @@ bind = "0.0.0.0:6399"
 # tls_client_ca = "/path/to/ca.pem"  # Enable mTLS (require client certificates)
 # unix_socket = "/var/run/shroudb.sock"
 
-# REST API — runs on a separate port. TLS for REST should be handled by a
-# reverse proxy (nginx, Caddy, cloud LB) in production. The RESP3 protocol
-# supports native TLS via tls_cert/tls_key above.
-rest_bind = "0.0.0.0:8080"
+# Prometheus metrics scrape endpoint (default 0.0.0.0:9090).
+# Set to disable with: metrics_bind = false
+metrics_bind = "0.0.0.0:9090"
+
+# REST API (not yet implemented; accepted for forward-compatibility)
+# rest_bind = "0.0.0.0:8080"
 
 # gRPC (not yet implemented)
 # grpc_bind = "0.0.0.0:50051"

@@ -8,12 +8,13 @@ A credential management server built in Rust. Manages JWT signing keys, API keys
 - **JWT algorithms:** ES256, ES384, RS256, RS384, RS512, EdDSA with automatic key rotation
 - **Password hashing:** Argon2id, bcrypt, scrypt with lockout and transparent rehash
 - **Encrypted storage:** AES-256-GCM at rest, per-keyspace derived keys (HKDF-SHA256), WAL + snapshots
-- **Dual protocol:** RESP3 (port 6399) and REST API (port 8080)
+- **RESP3 wire protocol** on port 6399 with pipelining support
 - **TLS and mTLS** on the RESP3 protocol, with Unix socket support
 - **Access control:** token-based auth with per-policy keyspace and command restrictions
 - **Metadata schemas:** optional typed, validated metadata on credentials with immutable field support
 - **Pub/sub:** real-time event notifications on keyspace channels
-- **Pipelining:** batch multiple commands in a single round-trip
+- **Prometheus metrics** on port 9090 (`/metrics` scrape endpoint)
+- **Webhook notifications** with HMAC-signed HTTP delivery and configurable retries
 - **Security hardened:** `mlock`-pinned secrets, zeroize-on-drop, core dumps disabled, constant-time comparisons
 
 ## Quick Start
@@ -29,7 +30,7 @@ cargo run --bin shroudb-cli
 cargo run -- --config config.toml
 ```
 
-The server listens on `0.0.0.0:6399` (RESP3) and `0.0.0.0:8080` (REST) by default.
+The server listens on `0.0.0.0:6399` (RESP3) and `0.0.0.0:9090` (Prometheus metrics) by default.
 
 ## Connection String
 
@@ -65,7 +66,7 @@ Environment variables can be interpolated with `${VAR_NAME}` syntax.
 ```toml
 [server]
 bind = "0.0.0.0:6399"
-rest_bind = "0.0.0.0:8080"
+metrics_bind = "0.0.0.0:9090"
 # tls_cert = "/path/to/cert.pem"
 # tls_key = "/path/to/key.pem"
 # tls_client_ca = "/path/to/ca.pem"  # mTLS
@@ -156,24 +157,6 @@ Without a master key, the server starts in dev mode with an ephemeral key — da
 
 See [PROTOCOL.md](PROTOCOL.md) for the full wire protocol specification.
 
-## REST API
-
-Available when `rest_bind` is configured:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/v1/{ks}/issue` | Issue a credential |
-| `POST` | `/v1/{ks}/verify` | Verify a credential |
-| `POST` | `/v1/{ks}/revoke` | Revoke a credential |
-| `POST` | `/v1/{ks}/refresh` | Rotate a refresh token |
-| `GET` | `/v1/{ks}/jwks` | JSON Web Key Set |
-| `GET` | `/v1/{ks}/keys` | List credentials |
-| `GET` | `/v1/{ks}/{id}` | Inspect a credential |
-| `PUT` | `/v1/{ks}/{id}` | Update credential metadata |
-| `DELETE` | `/v1/{ks}/{id}` | Revoke a credential |
-| `GET` | `/health` | Health check |
-| `GET` | `/metrics` | Prometheus metrics |
-
 ## Operational Commands
 
 ```sh
@@ -197,7 +180,7 @@ shroudb purge my-keyspace --config config.toml
 
 ```sh
 docker build -t shroudb .
-docker run -p 6399:6399 -p 8080:8080 \
+docker run -p 6399:6399 -p 9090:9090 \
   -e SHROUDB_MASTER_KEY="$(openssl rand -hex 32)" \
   -v shroudb-data:/data \
   shroudb
@@ -215,7 +198,7 @@ A systemd unit file is provided in `shroudb.service`.
 
 - **Storage:** Write-ahead log (WAL) with periodic snapshots, AES-256-GCM encrypted at rest with per-keyspace derived keys (HKDF-SHA256)
 - **RESP3 protocol:** Battle-tested framing with ShrouDB's own command set — not Redis-compatible
-- **REST:** Axum-based HTTP API on a separate port
+- **Observability:** Prometheus metrics endpoint with command counters, latency histograms, and key lifecycle gauges
 - **Workspace crates:** `shroudb-server`, `shroudb-protocol`, `shroudb-client`, `shroudb-cli`
 
 ## License

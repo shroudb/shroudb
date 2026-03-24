@@ -26,6 +26,7 @@ impl TestServer {
             r#"
 [server]
 bind = "127.0.0.1:{port}"
+metrics_bind = "127.0.0.1:0"
 
 [storage]
 data_dir = "{}"
