@@ -28,6 +28,7 @@
 //! ```
 
 pub mod builder;
+pub mod builders;
 pub mod connection;
 pub mod error;
 pub mod response;
@@ -38,6 +39,7 @@ pub use response::{
 };
 
 use builder::IssueBuilder;
+use builders::{KeysBuilder, RevokeBuilder, VerifyBuilder};
 use connection::Connection;
 
 /// Parsed components of a ShrouDB connection URI.
@@ -170,17 +172,20 @@ impl ShrouDBClient {
         IssueBuilder::new(self, keyspace)
     }
 
+    /// Start building a VERIFY command with optional parameters.
+    ///
+    /// Use the returned [`VerifyBuilder`] to set `payload` or `check_revoked`, then call `.execute()`.
+    pub fn verify_builder(&mut self, keyspace: &str, token: &str) -> VerifyBuilder<'_> {
+        VerifyBuilder::new(self, keyspace, token)
+    }
+
     /// Verify a credential (API key, JWT, or refresh token) in the given keyspace.
     pub async fn verify(
         &mut self,
         keyspace: &str,
         token: &str,
     ) -> Result<VerifyResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["VERIFY", keyspace, token])
-            .await?;
-        VerifyResult::from_response(resp)
+        self.verify_builder(keyspace, token).execute().await
     }
 
     /// Verify a credential with a payload (for HMAC keyspaces).
@@ -190,20 +195,34 @@ impl ShrouDBClient {
         token: &str,
         payload: &str,
     ) -> Result<VerifyResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["VERIFY", keyspace, token, "PAYLOAD", payload])
-            .await?;
-        VerifyResult::from_response(resp)
+        self.verify_builder(keyspace, token)
+            .payload(payload)
+            .execute()
+            .await
+    }
+
+    /// Verify a credential and also check revocation status.
+    pub async fn verify_check_revoked(
+        &mut self,
+        keyspace: &str,
+        token: &str,
+    ) -> Result<VerifyResult, ClientError> {
+        self.verify_builder(keyspace, token)
+            .check_revoked()
+            .execute()
+            .await
+    }
+
+    /// Start building a REVOKE command for a single credential.
+    ///
+    /// Use the returned [`RevokeBuilder`] to set optional `ttl`, then call `.execute()`.
+    pub fn revoke_builder(&mut self, keyspace: &str, credential_id: &str) -> RevokeBuilder<'_> {
+        RevokeBuilder::new_single(self, keyspace, credential_id)
     }
 
     /// Revoke a credential by credential ID.
     pub async fn revoke(&mut self, keyspace: &str, credential_id: &str) -> Result<(), ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["REVOKE", keyspace, credential_id])
-            .await?;
-        check_ok_status(resp)
+        self.revoke_builder(keyspace, credential_id).execute().await
     }
 
     /// Revoke all credentials in a refresh token family.
@@ -212,11 +231,18 @@ impl ShrouDBClient {
         keyspace: &str,
         family_id: &str,
     ) -> Result<(), ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["REVOKE", keyspace, "FAMILY", family_id])
-            .await?;
-        check_ok_status(resp)
+        RevokeBuilder::new_family(self, keyspace, family_id)
+            .execute()
+            .await
+    }
+
+    /// Revoke multiple credentials by ID in a single command.
+    pub async fn revoke_bulk(
+        &mut self,
+        keyspace: &str,
+        ids: Vec<String>,
+    ) -> Result<(), ClientError> {
+        RevokeBuilder::new_bulk(self, keyspace, ids).execute().await
     }
 
     /// Refresh a token, consuming the old one and returning a new credential.
@@ -356,13 +382,17 @@ impl ShrouDBClient {
         OkResult::from_response(resp)
     }
 
-    /// List credential IDs in a keyspace.
+    /// Start building a KEYS command with optional pagination and filtering.
+    ///
+    /// Use the returned [`KeysBuilder`] to set `cursor`, `pattern`, `state`, or `count`,
+    /// then call `.execute()`.
+    pub fn keys_builder(&mut self, keyspace: &str) -> KeysBuilder<'_> {
+        KeysBuilder::new(self, keyspace)
+    }
+
+    /// List credential IDs in a keyspace (default parameters).
     pub async fn keys(&mut self, keyspace: &str) -> Result<OkResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["KEYS", keyspace])
-            .await?;
-        OkResult::from_response(resp)
+        self.keys_builder(keyspace).execute().await
     }
 
     /// Set a password for a user in a password keyspace.
@@ -375,6 +405,25 @@ impl ShrouDBClient {
         let resp = self
             .connection
             .send_command_strs(&["PASSWORD", "SET", keyspace, user_id, password])
+            .await?;
+        OkResult::from_response(resp)
+    }
+
+    /// Set a password with metadata for a user in a password keyspace.
+    pub async fn password_set_with_metadata(
+        &mut self,
+        keyspace: &str,
+        user_id: &str,
+        password: &str,
+        metadata: serde_json::Value,
+    ) -> Result<OkResult, ClientError> {
+        let meta_str = serde_json::to_string(&metadata)
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
+        let resp = self
+            .connection
+            .send_command_strs(&[
+                "PASSWORD", "SET", keyspace, user_id, password, "META", &meta_str,
+            ])
             .await?;
         OkResult::from_response(resp)
     }
@@ -415,6 +464,22 @@ impl ShrouDBClient {
         OkResult::from_response(resp)
     }
 
+    /// Force-reset a user's password without requiring the old password.
+    ///
+    /// The caller is responsible for authorization (e.g., a verified reset token).
+    pub async fn password_reset(
+        &mut self,
+        keyspace: &str,
+        user_id: &str,
+        new_password: &str,
+    ) -> Result<OkResult, ClientError> {
+        let resp = self
+            .connection
+            .send_command_strs(&["PASSWORD", "RESET", keyspace, user_id, new_password])
+            .await?;
+        OkResult::from_response(resp)
+    }
+
     /// Import a pre-hashed password for migration from another system.
     ///
     /// Accepts hashes in argon2id/argon2i/argon2d (PHC format), bcrypt
@@ -432,6 +497,68 @@ impl ShrouDBClient {
             .send_command_strs(&["PASSWORD", "IMPORT", keyspace, user_id, hash])
             .await?;
         OkResult::from_response(resp)
+    }
+
+    /// Import a pre-hashed password with metadata.
+    pub async fn password_import_with_metadata(
+        &mut self,
+        keyspace: &str,
+        user_id: &str,
+        hash: &str,
+        metadata: serde_json::Value,
+    ) -> Result<OkResult, ClientError> {
+        let meta_str = serde_json::to_string(&metadata)
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
+        let resp = self
+            .connection
+            .send_command_strs(&[
+                "PASSWORD", "IMPORT", keyspace, user_id, hash, "META", &meta_str,
+            ])
+            .await?;
+        OkResult::from_response(resp)
+    }
+
+    /// Get a runtime configuration value.
+    pub async fn config_get(&mut self, key: &str) -> Result<OkResult, ClientError> {
+        let resp = self
+            .connection
+            .send_command_strs(&["CONFIG", "GET", key])
+            .await?;
+        OkResult::from_response(resp)
+    }
+
+    /// Attempt to set a runtime configuration value.
+    ///
+    /// Note: the server currently rejects all runtime config changes.
+    pub async fn config_set(&mut self, key: &str, value: &str) -> Result<(), ClientError> {
+        let resp = self
+            .connection
+            .send_command_strs(&["CONFIG", "SET", key, value])
+            .await?;
+        check_ok_status(resp)
+    }
+
+    /// Subscribe to real-time event notifications on a channel.
+    ///
+    /// This enters a streaming mode on the connection. The returned response
+    /// depends on the server's handling of the subscription.
+    pub async fn subscribe(&mut self, channel: &str) -> Result<Response, ClientError> {
+        self.connection
+            .send_command_strs(&["SUBSCRIBE", channel])
+            .await
+    }
+
+    /// Execute multiple commands in a single round-trip (pipeline).
+    ///
+    /// Each inner `Vec<String>` is one command's arguments (e.g., `["VERIFY", "ks", "token"]`).
+    /// Returns one response per command.
+    pub async fn pipeline(&mut self, commands: &[Vec<String>]) -> Result<Response, ClientError> {
+        let mut args = vec!["PIPELINE".to_string()];
+        for cmd_args in commands {
+            args.extend(cmd_args.iter().cloned());
+        }
+        args.push("END".to_string());
+        self.connection.send_command(&args).await
     }
 
     /// Send an arbitrary command and return the raw RESP3 response.

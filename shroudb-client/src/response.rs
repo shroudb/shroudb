@@ -231,7 +231,7 @@ fn write_raw(resp: &Response, buf: &mut String) {
 // Typed result structs
 // ---------------------------------------------------------------------------
 
-/// Result from an ISSUE command.
+/// Result from an ISSUE or REFRESH command.
 #[derive(Debug, Clone)]
 pub struct IssueResult {
     /// The issued API key (for `api_key` keyspaces).
@@ -246,6 +246,8 @@ pub struct IssueResult {
     pub signature: Option<String>,
     /// The key ID used for signing.
     pub kid: Option<String>,
+    /// Expiry timestamp in Unix seconds (for `jwt` keyspaces).
+    pub expires_at: Option<i64>,
 }
 
 impl IssueResult {
@@ -264,11 +266,12 @@ impl IssueResult {
             family_id: resp.get_string_field("family_id"),
             signature: resp.get_string_field("signature"),
             kid: resp.get_string_field("kid"),
+            expires_at: resp.get_int_field("expires_at"),
         })
     }
 }
 
-/// Result from a VERIFY command.
+/// Result from a VERIFY or PASSWORD VERIFY command.
 #[derive(Debug, Clone)]
 pub struct VerifyResult {
     /// The credential ID of the verified credential.
@@ -279,6 +282,8 @@ pub struct VerifyResult {
     pub metadata: Option<serde_json::Value>,
     /// Cache-until hint (Unix timestamp).
     pub cache_until: Option<i64>,
+    /// Whether the credential is valid (for `password` keyspaces).
+    pub valid: Option<bool>,
 }
 
 impl VerifyResult {
@@ -292,11 +297,13 @@ impl VerifyResult {
         }
         let claims = resp.get_field("claims").map(|v| v.to_json());
         let metadata = resp.get_field("metadata").map(|v| v.to_json());
+        let valid = resp.get_string_field("valid").map(|v| v == "true");
         Ok(Self {
             credential_id: resp.get_string_field("credential_id"),
             claims,
             metadata,
             cache_until: resp.get_int_field("cache_until"),
+            valid,
         })
     }
 
@@ -354,11 +361,13 @@ impl KeyStateResult {
                     .unwrap_or_else(|| "unknown".into());
                 let algorithm = item.get_string_field("algorithm");
                 let version = item.get_int_field("version");
+                let created_at = item.get_int_field("created_at");
                 keys.push(KeyInfo {
                     key_id,
                     state,
                     algorithm,
                     version,
+                    created_at,
                 });
             }
         } else {
@@ -382,6 +391,8 @@ pub struct KeyInfo {
     pub algorithm: Option<String>,
     /// The key version.
     pub version: Option<i64>,
+    /// When the key was created (Unix timestamp).
+    pub created_at: Option<i64>,
 }
 
 /// Generic result for commands that return a map with status and optional fields.
