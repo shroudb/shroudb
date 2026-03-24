@@ -130,10 +130,14 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          for bin in keyva keyva-cli keyva-auth; do
-            cp target/${{ matrix.target }}/release/$bin dist/
-            cd dist && tar czf ${bin}-${{ github.ref_name }}-${{ matrix.target }}.tar.gz $bin && rm $bin && cd ..
-          done
+          # keyva: server + cli bundled (like redis + redis-cli)
+          cp target/${{ matrix.target }}/release/keyva dist/
+          cp target/${{ matrix.target }}/release/keyva-cli dist/
+          cd dist && tar czf keyva-${{ github.ref_name }}-${{ matrix.target }}.tar.gz keyva keyva-cli && cd ..
+          # keyva-auth: standalone
+          cp target/${{ matrix.target }}/release/keyva-auth dist/
+          cd dist && tar czf keyva-auth-${{ github.ref_name }}-${{ matrix.target }}.tar.gz keyva-auth && cd ..
+          rm dist/keyva dist/keyva-cli dist/keyva-auth
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
