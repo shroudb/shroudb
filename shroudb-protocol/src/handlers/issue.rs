@@ -74,10 +74,11 @@ pub async fn handle_issue(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(now + ttl_secs.unwrap_or(*default_ttl_secs));
 
+            // jti is always set above, so this unwrap is safe
             let credential_id = claims
                 .get("jti")
                 .and_then(|v| v.as_str())
-                .unwrap_or(kid)
+                .expect("jti was set above")
                 .to_string();
 
             Ok(ResponseMap::ok()

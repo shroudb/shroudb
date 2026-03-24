@@ -696,9 +696,9 @@ position = 1
 description = "Target JWT keyspace"
 
 [[commands.jwks.response]]
-name = "jwks"
-type = "token"
-description = "JSON-encoded JWKS document"
+name = "keys"
+type = "json_value"
+description = "Array of JWK objects (RFC 7517 §5)"
 
 [[commands.jwks.errors]]
 code = "BADARG"

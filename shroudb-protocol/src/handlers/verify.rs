@@ -61,6 +61,29 @@ pub async fn handle_verify(
                 *leeway_secs,
             )?;
 
+            // Validate exp claim (RFC 7519 §4.1.4)
+            if let Some(exp) = claims.get("exp").and_then(|v| v.as_u64())
+                && now > exp + leeway_secs
+            {
+                return Err(CommandError::Expired {
+                    entity: "jwt".into(),
+                    id: claims
+                        .get("jti")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                });
+            }
+
+            // Validate nbf claim (RFC 7519 §4.1.5)
+            if let Some(nbf) = claims.get("nbf").and_then(|v| v.as_u64())
+                && now + leeway_secs < nbf
+            {
+                return Err(CommandError::ValidationError(
+                    "token not yet valid (nbf)".into(),
+                ));
+            }
+
             // Check required claims
             if let Some(required) = required_claims {
                 for (key, expected) in required {
@@ -71,12 +94,22 @@ pub async fn handle_verify(
                                 "missing required claim: {key}"
                             )));
                         }
-                        Some(actual) if *actual != expected_json => {
-                            return Err(CommandError::ValidationError(format!(
-                                "claim {key} mismatch: expected {expected_json}, got {actual}"
-                            )));
+                        Some(actual) => {
+                            // RFC 7519 §4.1.3: aud can be an array of strings
+                            let matches = if key == "aud" {
+                                match actual {
+                                    serde_json::Value::Array(arr) => arr.contains(&expected_json),
+                                    other => *other == expected_json,
+                                }
+                            } else {
+                                *actual == expected_json
+                            };
+                            if !matches {
+                                return Err(CommandError::ValidationError(format!(
+                                    "claim {key} mismatch: expected {expected_json}, got {actual}"
+                                )));
+                            }
                         }
-                        _ => {}
                     }
                 }
             }
@@ -106,13 +139,15 @@ pub async fn handle_verify(
             let credential_id = claims
                 .get("jti")
                 .and_then(|v| v.as_str())
-                .unwrap_or(&kid_str)
-                .to_string();
+                .map(|s| s.to_string());
 
             let mut resp = ResponseMap::ok()
-                .with("credential_id", ResponseValue::String(credential_id))
                 .with("claims", ResponseValue::Json(claims))
                 .with("state", ResponseValue::String("active".into()));
+
+            if let Some(cred_id) = credential_id {
+                resp = resp.with("credential_id", ResponseValue::String(cred_id));
+            }
 
             if let Some(cache_ttl) = verify_cache_ttl_secs {
                 let cache_until = now + cache_ttl;
