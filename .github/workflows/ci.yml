@@ -81,6 +81,8 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: aarch64-apple-darwin
@@ -96,9 +98,19 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install musl tools (Linux)
-        if: contains(matrix.target, 'linux-musl')
+      - name: Install musl tools (Linux x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install musl cross tools (Linux aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-musl]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p shroudb -p shroudb-cli
@@ -117,9 +129,9 @@ jobs:
           name: release-${{ matrix.target }}
           path: dist/*.tar.gz
 
-  docker:
-    name: Docker (${{ matrix.image }})
-    if: startsWith(github.ref, 'refs/tags/v')
+  docker-rc:
+    name: Docker RC (${{ matrix.image }})
+    if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-rc')
     needs: [check, test, fmt]
     runs-on: ubuntu-latest
     permissions:
@@ -130,12 +142,13 @@ jobs:
         include:
           - image: shroudb
             target: shroudb
-          - image: shroudb-cli
+          - image: cli
             target: shroudb-cli
     steps:
       - uses: actions/checkout@v5
       - name: Configure git auth for private deps
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -147,10 +160,47 @@ jobs:
           context: .
           file: Dockerfile
           target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/shroudb/${{ matrix.image }}:${{ github.ref_name }}
-            ghcr.io/shroudb/${{ matrix.image }}:latest
+          secrets: |
+            git_auth=https://x-access-token:${{ secrets.GH_PAT }}@github.com/
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker-release:
+    name: Docker Release (${{ matrix.image }})
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
+    needs: [check, test, fmt]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: shroudb
+            target: shroudb
+          - image: cli
+            target: shroudb-cli
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure git auth for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            shroudb/${{ matrix.image }}:${{ github.ref_name }}
+            shroudb/${{ matrix.image }}:latest
           secrets: |
             git_auth=https://x-access-token:${{ secrets.GH_PAT }}@github.com/
           cache-from: type=gha
@@ -158,7 +208,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
     needs: [release]
     runs-on: ubuntu-latest
     permissions:
@@ -173,3 +223,12 @@ jobs:
         with:
           files: artifacts/*.tar.gz
           generate_release_notes: true
+      - name: Update Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh api repos/shroudb/homebrew-tap/dispatches \
+            -f event_type=formula-update \
+            -f "client_payload[formula]=shroudb" \
+            -f "client_payload[version]=$VERSION"

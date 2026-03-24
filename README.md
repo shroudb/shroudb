@@ -176,13 +176,35 @@ shroudb import --file backup.kvex --keyspace my-keyspace --config config.toml
 shroudb purge my-keyspace --config config.toml
 ```
 
+## Installation
+
+### Homebrew
+
+```sh
+brew install shroudb/tap/shroudb
+```
+
+Installs `shroudb` (server) and `shroudb-cli`.
+
+### Docker
+
+```sh
+docker pull shroudb/shroudb
+```
+
+A CLI image is also available:
+
+```sh
+docker pull shroudb/cli
+```
+
+### Binary
+
+Download prebuilt binaries from [GitHub Releases](https://github.com/shroudb/shroudb/releases). Available for Linux (x86_64, aarch64) and macOS (x86_64, Apple Silicon).
+
+---
+
 ## Docker
-
-### Image
-
-```
-ghcr.io/shroudb/shroudb:latest
-```
 
 ### Ports
 
@@ -214,7 +236,7 @@ docker run -p 6399:6399 -p 9090:9090 \
   -e SHROUDB_MASTER_KEY="$(openssl rand -hex 32)" \
   -v shroudb-data:/data \
   -v ./config.toml:/config.toml:ro \
-  ghcr.io/shroudb/shroudb:latest --config /config.toml
+  shroudb/shroudb --config /config.toml
 ```
 
 See [`config.example.toml`](config.example.toml) for all options.
@@ -224,7 +246,7 @@ See [`config.example.toml`](config.example.toml) for all options.
 ```yaml
 services:
   shroudb:
-    image: ghcr.io/shroudb/shroudb:latest
+    image: shroudb/shroudb
     ports:
       - "6399:6399"
       - "9090:9090"
