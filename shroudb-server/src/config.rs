@@ -63,13 +63,18 @@ pub struct ServerConfig {
     /// CA certificate for verifying client certificates (enables mTLS).
     #[serde(default)]
     pub tls_client_ca: Option<PathBuf>,
+    /// REST API bind address (not yet implemented; accepted for forward-compatibility).
     #[serde(default)]
     pub rest_bind: Option<SocketAddr>,
+    /// gRPC bind address (not yet implemented; accepted for forward-compatibility).
     #[serde(default)]
     pub grpc_bind: Option<SocketAddr>,
     /// Per-connection rate limit in commands per second. None = no limit.
     #[serde(default)]
     pub rate_limit: Option<u32>,
+    /// Prometheus metrics scrape endpoint. Default `0.0.0.0:9090`.
+    #[serde(default = "default_metrics_bind")]
+    pub metrics_bind: Option<SocketAddr>,
 }
 
 impl Default for ServerConfig {
@@ -80,15 +85,16 @@ impl Default for ServerConfig {
             tls_key: None,
             unix_socket: None,
             tls_client_ca: None,
-            rest_bind: Some(default_rest_bind()),
+            rest_bind: None,
             grpc_bind: None,
             rate_limit: None,
+            metrics_bind: default_metrics_bind(),
         }
     }
 }
 
-fn default_rest_bind() -> SocketAddr {
-    "0.0.0.0:8080".parse().unwrap()
+fn default_metrics_bind() -> Option<SocketAddr> {
+    Some("0.0.0.0:9090".parse().unwrap())
 }
 
 #[derive(Debug, Deserialize)]

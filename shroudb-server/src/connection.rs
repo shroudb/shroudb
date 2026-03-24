@@ -25,9 +25,8 @@ impl Drop for ConnectionGuard {
 
 /// Simple token-bucket rate limiter for per-connection command throttling.
 ///
-/// Future: for multi-tenant deployments, rate limiting will key on
-/// (tenant_id, source_ip) rather than just connection. The rate limiter
-/// interface will need to move to a shared pool keyed by tenant.
+/// NOTE: currently scoped per-connection only. Multi-tenant deployments
+/// would need a shared pool keyed by `(tenant_id, source_ip)`.
 struct RateLimiter {
     tokens: f64,
     max_tokens: f64,
@@ -106,8 +105,12 @@ pub async fn handle_connection(
                 // Send an error back if possible, then close.
                 let err_frame =
                     shroudb_protocol::Resp3Frame::SimpleError(format!("ERR protocol: {e}"));
-                let _ = write_frame(&mut writer, &err_frame).await;
-                let _ = writer.flush().await;
+                if let Err(we) = write_frame(&mut writer, &err_frame).await {
+                    tracing::debug!(error = %we, "failed to write error response");
+                }
+                if let Err(fe) = writer.flush().await {
+                    tracing::debug!(error = %fe, "failed to flush error response");
+                }
                 break;
             }
         };

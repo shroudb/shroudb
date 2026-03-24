@@ -194,36 +194,73 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // 8. Set up webhook dispatcher (if configured).
+    //
+    // Lifecycle events are published to the CommandDispatcher's EventBus by
+    // every mutating command. We bridge those events to the WebhookDispatcher
+    // so that HTTP webhook deliveries fire automatically.
     let webhook_configs = config::to_webhook_configs(&cfg.webhooks);
     if !webhook_configs.is_empty() {
-        let (dispatcher_wh, rx) = shroudb_protocol::WebhookDispatcher::new(webhook_configs.clone());
+        let (webhook_dispatcher, rx) =
+            shroudb_protocol::WebhookDispatcher::new(webhook_configs.clone());
         tracing::info!(
             count = webhook_configs.len(),
             "webhook dispatcher initialized"
         );
-        // Spawn the background delivery loop.
+
+        // Spawn the background HTTP delivery loop.
         tokio::spawn(shroudb_protocol::webhooks::webhook_delivery_loop(
             rx,
             webhook_configs,
         ));
-        // The dispatcher_wh can be integrated into CommandDispatcher
-        // when per-handler webhook notifications are wired up.
-        drop(dispatcher_wh);
+
+        // Bridge: subscribe to the event bus and forward to the webhook dispatcher.
+        let mut event_rx = dispatcher.event_bus().subscribe();
+        tokio::spawn(async move {
+            while let Ok(event) = event_rx.recv().await {
+                webhook_dispatcher.notify(
+                    &event.event_type,
+                    &event.keyspace,
+                    serde_json::json!({
+                        "detail": event.detail,
+                        "timestamp": event.timestamp,
+                    }),
+                );
+            }
+        });
     }
 
-    // 9. Install Prometheus metrics recorder.
-    let metrics_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
-        .install_recorder()
+    // 9. Warn about unimplemented interface options.
+    if cfg.server.rest_bind.is_some() {
+        tracing::warn!(
+            "rest_bind is configured but the REST API is not yet implemented; \
+             only the RESP3 interface is available"
+        );
+    }
+    if cfg.server.grpc_bind.is_some() {
+        tracing::warn!(
+            "grpc_bind is configured but gRPC is not yet implemented; \
+             only the RESP3 interface is available"
+        );
+    }
+
+    // 10. Install Prometheus metrics recorder with HTTP scrape endpoint.
+    let mut prom_builder = metrics_exporter_prometheus::PrometheusBuilder::new();
+    if let Some(metrics_addr) = cfg.server.metrics_bind {
+        prom_builder = prom_builder.with_http_listener(metrics_addr);
+        tracing::info!(addr = %metrics_addr, "prometheus metrics endpoint enabled");
+    }
+    prom_builder
+        .install()
         .expect("failed to install metrics recorder");
 
-    // 10. Set up shutdown signal (SIGTERM + SIGINT).
+    // 11. Set up shutdown signal (SIGTERM + SIGINT).
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         shutdown_signal().await;
         let _ = shutdown_tx.send(true);
     });
 
-    // 11. Spawn background scheduler tasks.
+    // 12. Spawn background scheduler tasks.
     let scheduler_handles = scheduler::spawn_all(
         Arc::clone(&engine),
         Arc::clone(&dispatcher),
@@ -231,16 +268,16 @@ async fn main() -> anyhow::Result<()> {
         cli.config.clone(),
     );
 
-    // 12. Run server (blocks until shutdown).
+    // 13. Run server (blocks until shutdown).
     tracing::info!(bind = %cfg.server.bind, "shroudb ready");
-    server::run(&cfg.server, dispatcher, metrics_handle, shutdown_rx).await?;
+    server::run(&cfg.server, dispatcher, shutdown_rx).await?;
 
-    // 13. Abort scheduler tasks.
+    // 14. Abort scheduler tasks.
     for handle in scheduler_handles {
         handle.abort();
     }
 
-    // 14. Shut down storage engine (flush WAL, fsync).
+    // 15. Shut down storage engine (flush WAL, fsync).
     engine.shutdown().await?;
 
     // 15. Clean exit.

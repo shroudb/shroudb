@@ -308,12 +308,9 @@ impl CommandDispatcher {
             Command::Subscribe { .. } => {
                 // SUBSCRIBE is handled at the connection level; reaching here means
                 // it was dispatched in a context that doesn't support streaming.
-                Ok(ResponseMap::ok().with(
-                    "message",
-                    ResponseValue::String(
-                        "SUBSCRIBE is only supported on persistent TCP connections".into(),
-                    ),
-                ))
+                Err(CommandError::BadArg {
+                    message: "SUBSCRIBE is only supported on persistent TCP connections".into(),
+                })
             }
 
             Command::PasswordSet {

@@ -177,11 +177,27 @@ async fn rotation_scheduler(
                             Some(&system_auth),
                         )
                         .await;
-                    let _ = resp;
-                    tracing::info!(
-                        keyspace = %name,
-                        "rotation scheduler: rotation completed"
-                    );
+                    match resp {
+                        shroudb_protocol::CommandResponse::Success(_) => {
+                            tracing::info!(
+                                keyspace = %name,
+                                "rotation scheduler: rotation completed"
+                            );
+                        }
+                        shroudb_protocol::CommandResponse::Error(ref e) => {
+                            tracing::error!(
+                                keyspace = %name,
+                                error = %e,
+                                "rotation scheduler: rotation failed"
+                            );
+                        }
+                        _ => {
+                            tracing::warn!(
+                                keyspace = %name,
+                                "rotation scheduler: unexpected response"
+                            );
+                        }
+                    }
                 }
             }
         }
