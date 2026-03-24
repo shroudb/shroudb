@@ -410,7 +410,7 @@ impl OkResult {
                 if e.contains("DENIED") {
                     return Err(ClientError::AuthRequired);
                 }
-                return Err(ClientError::Server(e.clone()));
+                Err(ClientError::Server(e.clone()))
             }
             Response::Map(entries) => {
                 let mut fields = HashMap::new();
