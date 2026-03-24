@@ -112,7 +112,7 @@ jobs:
           rm dist/shroudb dist/shroudb-cli
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-${{ matrix.target }}
           path: dist/*.tar.gz
@@ -164,7 +164,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
           pattern: release-*
