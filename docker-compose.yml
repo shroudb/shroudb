@@ -6,7 +6,7 @@ services:
       - "9090:9090"
     environment:
       - SHROUDB_MASTER_KEY=${SHROUDB_MASTER_KEY:?Set SHROUDB_MASTER_KEY (64 hex chars)}
-      - RUST_LOG=info
+      - LOG_LEVEL=info
     volumes:
       - shroudb-data:/data
       - ./config.example.toml:/config.toml:ro

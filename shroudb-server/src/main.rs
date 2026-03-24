@@ -119,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_writer(std::sync::Mutex::new(audit_file))
                 .with_filter(audit_filter);
 
-            let env_filter = tracing_subscriber::EnvFilter::from_default_env();
+            let env_filter = log_level_filter();
             let console_layer = tracing_subscriber::fmt::layer()
                 .json()
                 .with_filter(env_filter);
@@ -149,8 +149,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_writer(std::sync::Mutex::new(audit_file))
                 .with_filter(audit_filter);
 
-            let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+            let env_filter = log_level_filter();
             let console_layer = tracing_subscriber::fmt::layer().with_filter(env_filter);
 
             tracing_subscriber::registry()
@@ -1127,6 +1126,12 @@ async fn handle_doctor(config_path: &Path) -> anyhow::Result<()> {
 }
 
 /// Wait for either SIGINT (Ctrl-C) or SIGTERM.
+/// Build a tracing `EnvFilter` from `LOG_LEVEL`, defaulting to `"info"`.
+fn log_level_filter() -> tracing_subscriber::EnvFilter {
+    let val = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+    tracing_subscriber::EnvFilter::new(val)
+}
+
 async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
 

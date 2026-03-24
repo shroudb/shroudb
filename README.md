@@ -201,7 +201,7 @@ Mount a volume at `/data` for durable storage (WAL segments + snapshots). Withou
 |----------|----------|-------------|
 | `SHROUDB_MASTER_KEY` | Yes (production) | 64 hex characters. Encrypts all data at rest. |
 | `SHROUDB_MASTER_KEY_FILE` | Alternative | Path to a file containing the master key. |
-| `RUST_LOG` | No | Log level (`info`, `debug`, `warn`). Default: `info`. |
+| `LOG_LEVEL` | No | Log level (`info`, `debug`, `warn`). Default: `info`. |
 
 Without a master key the server starts in dev mode with an ephemeral key — data will not survive restarts.
 
@@ -230,7 +230,7 @@ services:
       - "9090:9090"
     environment:
       - SHROUDB_MASTER_KEY=${SHROUDB_MASTER_KEY}
-      - RUST_LOG=info
+      - LOG_LEVEL=info
     volumes:
       - shroudb-data:/data
       - ./config.toml:/config.toml:ro

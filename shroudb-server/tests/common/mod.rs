@@ -74,7 +74,7 @@ max_chain_length = 10
             .arg("--config")
             .arg(&config_path)
             .env("SHROUDB_MASTER_KEY", master_key)
-            .env("RUST_LOG", "warn")
+            .env("LOG_LEVEL", "warn")
             .spawn()
             .expect("failed to start shroudb");
 
