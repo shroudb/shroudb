@@ -105,7 +105,7 @@ jobs:
       - name: Install musl cross tools (Linux aarch64)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: |
-          curl -fsSL https://musl.cc/aarch64-linux-musl-cross.tgz | sudo tar xz -C /opt
+          curl -fsSL https://more.musl.cc/10/x86_64-linux-musl/aarch64-linux-musl-cross.tgz | sudo tar xz -C /opt
           echo "/opt/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
           mkdir -p .cargo
           printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-musl-gcc"\n' >> .cargo/config.toml
