@@ -130,26 +130,34 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/keyva dist/
-          cp target/${{ matrix.target }}/release/keyva-cli dist/
-          cp target/${{ matrix.target }}/release/keyva-auth dist/
-          cd dist
-          tar czf keyva-${{ github.ref_name }}-${{ matrix.target }}.tar.gz keyva keyva-cli keyva-auth
+          for bin in keyva keyva-cli keyva-auth; do
+            cp target/${{ matrix.target }}/release/$bin dist/
+            cd dist && tar czf ${bin}-${{ github.ref_name }}-${{ matrix.target }}.tar.gz $bin && rm $bin && cd ..
+          done
 
-      - name: Upload release artifact
+      - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: keyva-${{ matrix.target }}
+          name: release-${{ matrix.target }}
           path: dist/*.tar.gz
 
   docker:
-    name: Docker Image
+    name: Docker (${{ matrix.image }})
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [check, test, fmt]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      matrix:
+        include:
+          - image: keyva
+            target: keyva
+          - image: keyva-auth
+            target: keyva-auth
+          - image: keyva-cli
+            target: keyva-cli
     steps:
       - uses: actions/checkout@v5
         with:
@@ -169,10 +177,11 @@ jobs:
         with:
           context: .
           file: keyva/Dockerfile
+          target: ${{ matrix.target }}
           push: true
           tags: |
-            ghcr.io/keyva-io/keyva:${{ github.ref_name }}
-            ghcr.io/keyva-io/keyva:latest
+            ghcr.io/keyva-io/${{ matrix.image }}:${{ github.ref_name }}
+            ghcr.io/keyva-io/${{ matrix.image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -187,7 +196,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: keyva-*
+          pattern: release-*
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
