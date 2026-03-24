@@ -167,7 +167,8 @@ pub async fn handle_refresh(
                 .with(
                     "family_id",
                     ResponseValue::String(old_entry.family_id.as_str().to_string()),
-                );
+                )
+                .with("expires_at", ResponseValue::Integer(new_expires_at as i64));
 
             if !old_entry.metadata.is_empty() {
                 let meta_map: serde_json::Map<String, serde_json::Value> = old_entry

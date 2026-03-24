@@ -60,6 +60,12 @@ pub async fn handle_issue(
                 claims["iat"] = serde_json::json!(now);
             }
 
+            // Set jti (credential_id) if not present
+            if claims.get("jti").is_none() {
+                let cred_id = shroudb_core::CredentialId::new();
+                claims["jti"] = serde_json::json!(cred_id.as_str());
+            }
+
             let kid = active_key.key_id.as_str();
             let token = shroudb_crypto::sign_jwt(private_key.as_bytes(), *algorithm, &claims, kid)?;
 
@@ -68,9 +74,15 @@ pub async fn handle_issue(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(now + ttl_secs.unwrap_or(*default_ttl_secs));
 
+            let credential_id = claims
+                .get("jti")
+                .and_then(|v| v.as_str())
+                .unwrap_or(kid)
+                .to_string();
+
             Ok(ResponseMap::ok()
+                .with("credential_id", ResponseValue::String(credential_id))
                 .with("token", ResponseValue::String(token))
-                .with("kid", ResponseValue::String(kid.to_string()))
                 .with("expires_at", ResponseValue::Integer(expires_at as i64)))
         }
 
@@ -121,11 +133,11 @@ pub async fn handle_issue(
                 .await?;
 
             Ok(ResponseMap::ok()
-                .with("api_key", ResponseValue::String(api_key))
                 .with(
                     "credential_id",
                     ResponseValue::String(credential_id.as_str().to_string()),
-                ))
+                )
+                .with("token", ResponseValue::String(api_key)))
         }
 
         KeyspacePolicy::Hmac { algorithm, .. } => {
@@ -159,8 +171,8 @@ pub async fn handle_issue(
             let kid = active_key.key_id.as_str().to_string();
 
             Ok(ResponseMap::ok()
-                .with("signature", ResponseValue::String(sig_hex))
-                .with("kid", ResponseValue::String(kid)))
+                .with("credential_id", ResponseValue::String(kid))
+                .with("token", ResponseValue::String(sig_hex)))
         }
 
         KeyspacePolicy::RefreshToken { token_ttl_secs, .. } => {

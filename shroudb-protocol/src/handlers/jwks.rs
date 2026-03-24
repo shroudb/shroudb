@@ -45,5 +45,5 @@ pub async fn handle_jwks(
         }
     }
 
-    Ok(ResponseMap::ok().with("keys", ResponseValue::Array(jwks)))
+    Ok(ResponseMap::ok().with("jwks", ResponseValue::Array(jwks)))
 }

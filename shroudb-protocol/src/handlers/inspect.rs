@@ -37,7 +37,7 @@ pub async fn handle_inspect(
                 )
                 .with("state", ResponseValue::String(entry.state.to_string()))
                 .with(
-                    "metadata",
+                    "meta",
                     ResponseValue::Json(shroudb_core::metadata_to_json(&entry.metadata)),
                 )
                 .with(
@@ -47,6 +47,13 @@ pub async fn handle_inspect(
                 .with(
                     "expires_at",
                     match entry.expires_at {
+                        Some(ts) => ResponseValue::Integer(ts as i64),
+                        None => ResponseValue::Null,
+                    },
+                )
+                .with(
+                    "last_verified_at",
+                    match entry.last_verified_at {
                         Some(ts) => ResponseValue::Integer(ts as i64),
                         None => ResponseValue::Null,
                     },
@@ -77,7 +84,7 @@ pub async fn handle_inspect(
                 )
                 .with("state", ResponseValue::String(entry.state.to_string()))
                 .with(
-                    "metadata",
+                    "meta",
                     ResponseValue::Json(shroudb_core::metadata_to_json(&entry.metadata)),
                 )
                 .with(

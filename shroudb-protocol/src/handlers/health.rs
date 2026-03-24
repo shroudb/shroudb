@@ -65,7 +65,7 @@ pub async fn handle_health(
                     .get(ks_name)
                     .map_or(0, |idx| idx.len() as i64),
             };
-            resp = resp.with("credential_count", ResponseValue::Integer(credential_count));
+            resp = resp.with("count", ResponseValue::Integer(credential_count));
 
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

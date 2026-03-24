@@ -79,7 +79,7 @@ pub async fn handle_rotate(
                         return Ok(ResponseMap::ok()
                             .with("message", ResponseValue::String("pre-staged key".into()))
                             .with(
-                                "new_kid",
+                                "new_key_id",
                                 ResponseValue::String(new_kid.as_str().to_string()),
                             )
                             .with(
@@ -106,11 +106,18 @@ pub async fn handle_rotate(
                     plan.push(format!("promote {} Staged->Active", s.key_id.as_str()));
                 }
                 plan.push("generate new Staged key".into());
-                return Ok(ResponseMap::ok().with(
-                    "plan",
-                    ResponseValue::Array(plan.into_iter().map(ResponseValue::String).collect()),
-                ));
+                return Ok(ResponseMap::ok()
+                    .with(
+                        "plan",
+                        ResponseValue::Array(plan.into_iter().map(ResponseValue::String).collect()),
+                    )
+                    .with("dryrun", ResponseValue::String("true".into())));
             }
+
+            let old_key_id = active
+                .as_ref()
+                .map(|a| a.key_id.as_str().to_string())
+                .unwrap_or_default();
 
             // Promote staged -> active if present
             if let Some(s) = &staged {
@@ -182,10 +189,12 @@ pub async fn handle_rotate(
                 ring.replace(key);
             }
 
-            Ok(ResponseMap::ok().with(
-                "new_kid",
-                ResponseValue::String(new_kid.as_str().to_string()),
-            ))
+            Ok(ResponseMap::ok()
+                .with(
+                    "new_key_id",
+                    ResponseValue::String(new_kid.as_str().to_string()),
+                )
+                .with("old_key_id", ResponseValue::String(old_key_id)))
         }
 
         KeyspacePolicy::Hmac {
@@ -225,11 +234,18 @@ pub async fn handle_rotate(
                     plan.push(format!("promote {} Staged->Active", s.key_id.as_str()));
                 }
                 plan.push("generate new Staged HMAC key".into());
-                return Ok(ResponseMap::ok().with(
-                    "plan",
-                    ResponseValue::Array(plan.into_iter().map(ResponseValue::String).collect()),
-                ));
+                return Ok(ResponseMap::ok()
+                    .with(
+                        "plan",
+                        ResponseValue::Array(plan.into_iter().map(ResponseValue::String).collect()),
+                    )
+                    .with("dryrun", ResponseValue::String("true".into())));
             }
+
+            let old_key_id = active
+                .as_ref()
+                .map(|a| a.key_id.as_str().to_string())
+                .unwrap_or_default();
 
             // Promote staged -> active
             if let Some(s) = &staged {
@@ -300,10 +316,12 @@ pub async fn handle_rotate(
                 ring.replace(key);
             }
 
-            Ok(ResponseMap::ok().with(
-                "new_kid",
-                ResponseValue::String(new_kid.as_str().to_string()),
-            ))
+            Ok(ResponseMap::ok()
+                .with(
+                    "new_key_id",
+                    ResponseValue::String(new_kid.as_str().to_string()),
+                )
+                .with("old_key_id", ResponseValue::String(old_key_id)))
         }
 
         _ => Err(CommandError::WrongType {

@@ -81,9 +81,9 @@ pub async fn handle_keys(
                 .collect();
 
             Ok(ResponseMap::ok()
-                .with("credentials", ResponseValue::Array(result))
+                .with("keys", ResponseValue::Array(result))
                 .with("count", ResponseValue::Integer(page.len() as i64))
-                .with("next_cursor", next_cursor))
+                .with("cursor", next_cursor))
         }
         KeyspaceType::RefreshToken => {
             let idx = engine.index().refresh_tokens.get(ks_name).ok_or_else(|| {
@@ -146,9 +146,9 @@ pub async fn handle_keys(
                 .collect();
 
             Ok(ResponseMap::ok()
-                .with("credentials", ResponseValue::Array(result))
+                .with("keys", ResponseValue::Array(result))
                 .with("count", ResponseValue::Integer(page.len() as i64))
-                .with("next_cursor", next_cursor))
+                .with("cursor", next_cursor))
         }
         _ => Err(CommandError::WrongType {
             keyspace: ks_name.clone(),

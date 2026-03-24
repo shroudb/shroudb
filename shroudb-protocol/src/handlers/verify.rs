@@ -103,7 +103,16 @@ pub async fn handle_verify(
                 }
             }
 
-            let mut resp = ResponseMap::ok().with("claims", ResponseValue::Json(claims));
+            let credential_id = claims
+                .get("jti")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&kid_str)
+                .to_string();
+
+            let mut resp = ResponseMap::ok()
+                .with("credential_id", ResponseValue::String(credential_id))
+                .with("claims", ResponseValue::Json(claims))
+                .with("state", ResponseValue::String("active".into()));
 
             if let Some(cache_ttl) = verify_cache_ttl_secs {
                 let cache_until = now + cache_ttl;
@@ -160,9 +169,10 @@ pub async fn handle_verify(
                     ResponseValue::String(entry.credential_id.as_str().to_string()),
                 )
                 .with(
-                    "metadata",
+                    "meta",
                     ResponseValue::Json(shroudb_core::metadata_to_json(&entry.metadata)),
-                ))
+                )
+                .with("state", ResponseValue::String("active".into())))
         }
 
         KeyspacePolicy::Hmac { algorithm, .. } => {
@@ -199,10 +209,12 @@ pub async fn handle_verify(
                     &signature,
                 )?;
                 if valid {
-                    return Ok(ResponseMap::ok().with(
-                        "kid",
-                        ResponseValue::String(vkey.key_id.as_str().to_string()),
-                    ));
+                    return Ok(ResponseMap::ok()
+                        .with(
+                            "credential_id",
+                            ResponseValue::String(vkey.key_id.as_str().to_string()),
+                        )
+                        .with("state", ResponseValue::String("active".into())));
                 }
             }
 
@@ -250,7 +262,8 @@ pub async fn handle_verify(
                 .with(
                     "family_id",
                     ResponseValue::String(entry.family_id.as_str().to_string()),
-                ))
+                )
+                .with("state", ResponseValue::String("active".into())))
         }
 
         KeyspacePolicy::Password { .. } => Err(CommandError::WrongType {

@@ -38,7 +38,7 @@ async fn issue_api_key() {
 
     let resp = client.cmd(&["ISSUE", "test-apikeys"]).await;
     assert_ok(&resp, "ISSUE test-apikeys");
-    let api_key = resp.get("api_key").as_str();
+    let api_key = resp.get("token").as_str();
     assert!(
         api_key.starts_with("sk_"),
         "api key should start with sk_, got: {api_key}"
@@ -59,7 +59,7 @@ async fn issue_and_verify_api_key() {
     // Issue
     let resp = client.cmd(&["ISSUE", "test-apikeys"]).await;
     assert_ok(&resp, "ISSUE");
-    let api_key = resp.get("api_key").as_str().to_string();
+    let api_key = resp.get("token").as_str().to_string();
     let cred_id = resp.get("credential_id").as_str().to_string();
 
     // Verify -- currently fails due to hash mismatch bug
@@ -102,7 +102,7 @@ async fn revoke_api_key() {
 
     let resp = client.cmd(&["ISSUE", "test-apikeys"]).await;
     assert_ok(&resp, "ISSUE");
-    let api_key = resp.get("api_key").as_str().to_string();
+    let api_key = resp.get("token").as_str().to_string();
     let cred_id = resp.get("credential_id").as_str().to_string();
 
     // Revoke by credential_id
@@ -123,7 +123,7 @@ async fn suspend_and_unsuspend_api_key() {
 
     let resp = client.cmd(&["ISSUE", "test-apikeys"]).await;
     assert_ok(&resp, "ISSUE");
-    let api_key = resp.get("api_key").as_str().to_string();
+    let api_key = resp.get("token").as_str().to_string();
     let cred_id = resp.get("credential_id").as_str().to_string();
 
     // Suspend
@@ -347,7 +347,7 @@ async fn issue_and_verify_hmac() {
         .cmd(&["ISSUE", "test-hmac", "CLAIMS", payload_json])
         .await;
     assert_ok(&resp, "HMAC ISSUE");
-    let signature = resp.get("signature").as_str().to_string();
+    let signature = resp.get("token").as_str().to_string();
 
     // Verify -- PAYLOAD must match the serialized JSON bytes
     let resp = client
@@ -367,7 +367,7 @@ async fn multiple_clients_share_state() {
     // Issue on client1
     let resp = client1.cmd(&["ISSUE", "test-apikeys"]).await;
     assert_ok(&resp, "ISSUE on client1");
-    let api_key = resp.get("api_key").as_str().to_string();
+    let api_key = resp.get("token").as_str().to_string();
 
     // Verify on client2 (will fail due to hash bug, but tests cross-client connectivity)
     let resp = client2.cmd(&["VERIFY", "test-apikeys", &api_key]).await;
@@ -413,8 +413,8 @@ async fn issue_multiple_api_keys_unique() {
     let resp1 = client.cmd(&["ISSUE", "test-apikeys"]).await;
     let resp2 = client.cmd(&["ISSUE", "test-apikeys"]).await;
 
-    let key1 = resp1.get("api_key").as_str();
-    let key2 = resp2.get("api_key").as_str();
+    let key1 = resp1.get("token").as_str();
+    let key2 = resp2.get("token").as_str();
     assert_ne!(key1, key2, "each issued API key should be unique");
 
     let cred1 = resp1.get("credential_id").as_str();
@@ -448,14 +448,14 @@ async fn idempotency_key_dedup() {
         .cmd(&["ISSUE", "test-apikeys", "IDEMPOTENCY_KEY", "idem-1"])
         .await;
     assert_ok(&resp1, "first ISSUE");
-    let key1 = resp1.get("api_key").as_str().to_string();
+    let key1 = resp1.get("token").as_str().to_string();
 
     // Same idempotency key — should return cached response
     let resp2 = client
         .cmd(&["ISSUE", "test-apikeys", "IDEMPOTENCY_KEY", "idem-1"])
         .await;
     assert_ok(&resp2, "second ISSUE");
-    let key2 = resp2.get("api_key").as_str().to_string();
+    let key2 = resp2.get("token").as_str().to_string();
     assert_eq!(key1, key2, "idempotent responses should match");
 }
 
@@ -723,7 +723,7 @@ async fn api_key_survives_restart() {
 
         let resp = client.cmd(&["ISSUE", "test-apikeys"]).await;
         assert_ok(&resp, "ISSUE");
-        api_key = resp.get("api_key").as_str().to_string();
+        api_key = resp.get("token").as_str().to_string();
 
         server.stop();
     }
