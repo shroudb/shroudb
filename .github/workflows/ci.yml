@@ -105,15 +105,15 @@ jobs:
       - name: Install musl cross tools (Linux aarch64)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: |
-          sudo apt-get update && sudo apt-get install -y musl-tools gcc-aarch64-linux-gnu
+          curl -fsSL https://musl.cc/aarch64-linux-musl-cross.tgz | sudo tar xz -C /opt
+          echo "/opt/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
           mkdir -p .cargo
-          cat >> .cargo/config.toml <<'EOF'
-          [target.aarch64-unknown-linux-musl]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
+          printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-musl-gcc"\n' >> .cargo/config.toml
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p shroudb -p shroudb-cli
+        env:
+          CC_aarch64_unknown_linux_musl: aarch64-linux-musl-gcc
 
       - name: Package
         run: |
@@ -164,6 +164,8 @@ jobs:
           push: true
           tags: |
             ghcr.io/shroudb/${{ matrix.image }}:${{ github.ref_name }}
+          provenance: true
+          sbom: true
           secrets: |
             git_auth=https://x-access-token:${{ secrets.GH_PAT }}@github.com/
           cache-from: type=gha
@@ -174,6 +176,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
     needs: [check, test, fmt]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         include:
@@ -189,6 +194,11 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: docker/build-push-action@v6
@@ -201,6 +211,10 @@ jobs:
           tags: |
             shroudb/${{ matrix.image }}:${{ github.ref_name }}
             shroudb/${{ matrix.image }}:latest
+            ghcr.io/shroudb/${{ matrix.image }}:${{ github.ref_name }}
+            ghcr.io/shroudb/${{ matrix.image }}:latest
+          provenance: true
+          sbom: true
           secrets: |
             git_auth=https://x-access-token:${{ secrets.GH_PAT }}@github.com/
           cache-from: type=gha
