@@ -1,11 +1,7 @@
-FROM rust:1-bookworm AS builder
-
-RUN apt-get update && apt-get install -y musl-tools && rm -rf /var/lib/apt/lists/*
+FROM messense/rust-musl-cross:x86_64-musl AS builder
 
 WORKDIR /build
 COPY . .
-
-RUN rustup target add x86_64-unknown-linux-musl
 
 RUN --mount=type=secret,id=git_auth,env=GIT_AUTH_URL \
     if [ -n "$GIT_AUTH_URL" ]; then git config --global url."$GIT_AUTH_URL".insteadOf "https://github.com/"; fi && \

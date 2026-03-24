@@ -6,8 +6,8 @@ members = [
     "shroudb-protocol",
     "shroudb-client",
     "shroudb-cli",
-    "shroudb-codegen",
 ]
+exclude = ["shroudb-codegen"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,6 +24,7 @@ shroudb-client = { path = "shroudb-client" }
 shroudb-core = { git = "https://github.com/shroudb/commons.git", tag = "v0.1.0" }
 shroudb-crypto = { git = "https://github.com/shroudb/commons.git", tag = "v0.1.0" }
 shroudb-storage = { git = "https://github.com/shroudb/commons.git", tag = "v0.1.0" }
+shroudb-codegen-core = { path = "../commons/shroudb-codegen-core" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
