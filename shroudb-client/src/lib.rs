@@ -13,7 +13,7 @@
 //!
 //! // Issue an API key
 //! let result = client.issue("my-keyspace").execute().await?;
-//! let api_key = result.api_key.as_ref().unwrap();
+//! let api_key = result.token.as_ref().unwrap();
 //! println!("API key: {api_key}");
 //!
 //! // Verify it

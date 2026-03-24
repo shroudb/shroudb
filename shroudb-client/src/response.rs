@@ -234,19 +234,13 @@ fn write_raw(resp: &Response, buf: &mut String) {
 /// Result from an ISSUE or REFRESH command.
 #[derive(Debug, Clone)]
 pub struct IssueResult {
-    /// The issued API key (for `api_key` keyspaces).
-    pub api_key: Option<String>,
-    /// The issued token (for `jwt` or `refresh_token` keyspaces).
+    /// The issued token, API key, or HMAC signature (all keyspace types).
     pub token: Option<String>,
     /// The credential ID.
     pub credential_id: Option<String>,
     /// The family ID (for `refresh_token` keyspaces).
     pub family_id: Option<String>,
-    /// The HMAC signature (for `hmac` keyspaces).
-    pub signature: Option<String>,
-    /// The key ID used for signing.
-    pub kid: Option<String>,
-    /// Expiry timestamp in Unix seconds (for `jwt` keyspaces).
+    /// Expiry timestamp in Unix seconds.
     pub expires_at: Option<i64>,
 }
 
@@ -260,12 +254,9 @@ impl IssueResult {
             return Err(ClientError::Server(e.clone()));
         }
         Ok(Self {
-            api_key: resp.get_string_field("api_key"),
             token: resp.get_string_field("token"),
             credential_id: resp.get_string_field("credential_id"),
             family_id: resp.get_string_field("family_id"),
-            signature: resp.get_string_field("signature"),
-            kid: resp.get_string_field("kid"),
             expires_at: resp.get_int_field("expires_at"),
         })
     }
@@ -279,7 +270,9 @@ pub struct VerifyResult {
     /// Decoded JWT claims (for `jwt` keyspaces).
     pub claims: Option<serde_json::Value>,
     /// Credential metadata.
-    pub metadata: Option<serde_json::Value>,
+    pub meta: Option<serde_json::Value>,
+    /// Credential state (e.g. `"active"`).
+    pub state: Option<String>,
     /// Cache-until hint (Unix timestamp).
     pub cache_until: Option<i64>,
     /// Whether the credential is valid (for `password` keyspaces).
@@ -296,12 +289,17 @@ impl VerifyResult {
             return Err(ClientError::Server(e.clone()));
         }
         let claims = resp.get_field("claims").map(|v| v.to_json());
-        let metadata = resp.get_field("metadata").map(|v| v.to_json());
+        // Read both "meta" (spec) and "metadata" (PASSWORD VERIFY uses "metadata")
+        let meta = resp
+            .get_field("meta")
+            .or_else(|| resp.get_field("metadata"))
+            .map(|v| v.to_json());
         let valid = resp.get_string_field("valid").map(|v| v == "true");
         Ok(Self {
             credential_id: resp.get_string_field("credential_id"),
             claims,
-            metadata,
+            meta,
+            state: resp.get_string_field("state"),
             cache_until: resp.get_int_field("cache_until"),
             valid,
         })
@@ -316,7 +314,7 @@ impl VerifyResult {
 /// Result from a HEALTH command.
 #[derive(Debug, Clone)]
 pub struct HealthResult {
-    /// Server state (e.g. `"READY"`).
+    /// Server state (e.g. `"ready"`).
     pub state: String,
 }
 

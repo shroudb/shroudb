@@ -571,4 +571,155 @@ mod tests {
         let err = parse_command(frame).unwrap_err();
         assert!(matches!(err, CommandError::BadArg { .. }));
     }
+
+    /// Round-trip: Command → to_wire_args → parse_command → assert match.
+    /// Validates that all PASSWORD variants serialize and parse symmetrically,
+    /// proving the remote auth NOTFOUND issue is not in this crate.
+    fn roundtrip(cmd: &Command) -> Command {
+        let wire = cmd.to_wire_args();
+        let frame = Resp3Frame::Array(
+            wire.iter()
+                .map(|s| Resp3Frame::BulkString(s.as_bytes().to_vec()))
+                .collect(),
+        );
+        parse_command(frame).unwrap()
+    }
+
+    #[test]
+    fn roundtrip_password_set() {
+        let cmd = Command::PasswordSet {
+            keyspace: "default_passwords".into(),
+            user_id: "alice".into(),
+            plaintext: "s3cret".into(),
+            metadata: None,
+        };
+        match roundtrip(&cmd) {
+            Command::PasswordSet {
+                keyspace,
+                user_id,
+                plaintext,
+                metadata,
+            } => {
+                assert_eq!(keyspace, "default_passwords");
+                assert_eq!(user_id, "alice");
+                assert_eq!(plaintext, "s3cret");
+                assert!(metadata.is_none());
+            }
+            other => panic!("expected PasswordSet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_password_set_with_meta() {
+        let meta = serde_json::json!({"role": "admin"});
+        let cmd = Command::PasswordSet {
+            keyspace: "pw".into(),
+            user_id: "bob".into(),
+            plaintext: "pass".into(),
+            metadata: Some(meta.clone()),
+        };
+        match roundtrip(&cmd) {
+            Command::PasswordSet {
+                keyspace,
+                user_id,
+                metadata,
+                ..
+            } => {
+                assert_eq!(keyspace, "pw");
+                assert_eq!(user_id, "bob");
+                assert_eq!(metadata.unwrap(), meta);
+            }
+            other => panic!("expected PasswordSet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_password_verify() {
+        let cmd = Command::PasswordVerify {
+            keyspace: "default_passwords".into(),
+            user_id: "alice".into(),
+            plaintext: "s3cret".into(),
+        };
+        match roundtrip(&cmd) {
+            Command::PasswordVerify {
+                keyspace,
+                user_id,
+                plaintext,
+            } => {
+                assert_eq!(keyspace, "default_passwords");
+                assert_eq!(user_id, "alice");
+                assert_eq!(plaintext, "s3cret");
+            }
+            other => panic!("expected PasswordVerify, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_password_change() {
+        let cmd = Command::PasswordChange {
+            keyspace: "pw".into(),
+            user_id: "alice".into(),
+            old_plaintext: "old".into(),
+            new_plaintext: "new".into(),
+        };
+        match roundtrip(&cmd) {
+            Command::PasswordChange {
+                keyspace,
+                user_id,
+                old_plaintext,
+                new_plaintext,
+            } => {
+                assert_eq!(keyspace, "pw");
+                assert_eq!(user_id, "alice");
+                assert_eq!(old_plaintext, "old");
+                assert_eq!(new_plaintext, "new");
+            }
+            other => panic!("expected PasswordChange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_password_reset() {
+        let cmd = Command::PasswordReset {
+            keyspace: "pw".into(),
+            user_id: "alice".into(),
+            new_plaintext: "reset123".into(),
+        };
+        match roundtrip(&cmd) {
+            Command::PasswordReset {
+                keyspace,
+                user_id,
+                new_plaintext,
+            } => {
+                assert_eq!(keyspace, "pw");
+                assert_eq!(user_id, "alice");
+                assert_eq!(new_plaintext, "reset123");
+            }
+            other => panic!("expected PasswordReset, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn roundtrip_password_import() {
+        let cmd = Command::PasswordImport {
+            keyspace: "pw".into(),
+            user_id: "alice".into(),
+            hash: "$argon2id$v=19$m=65536,t=3,p=4$abc$def".into(),
+            metadata: None,
+        };
+        match roundtrip(&cmd) {
+            Command::PasswordImport {
+                keyspace,
+                user_id,
+                hash,
+                metadata,
+            } => {
+                assert_eq!(keyspace, "pw");
+                assert_eq!(user_id, "alice");
+                assert_eq!(hash, "$argon2id$v=19$m=65536,t=3,p=4$abc$def");
+                assert!(metadata.is_none());
+            }
+            other => panic!("expected PasswordImport, got {other:?}"),
+        }
+    }
 }

@@ -9,7 +9,7 @@ async fn client_health() {
         .await
         .unwrap();
     let health = client.health().await.unwrap();
-    assert_eq!(health.state, "READY");
+    assert_eq!(health.state, "ready");
 }
 
 #[tokio::test]
@@ -20,10 +20,10 @@ async fn client_issue_verify_api_key() {
         .unwrap();
 
     let result = client.issue("test-apikeys").execute().await.unwrap();
-    assert!(result.api_key.is_some());
+    assert!(result.token.is_some());
     assert!(result.credential_id.is_some());
 
-    let api_key = result.api_key.as_ref().unwrap();
+    let api_key = result.token.as_ref().unwrap();
     assert!(api_key.starts_with("sk_"));
 
     let verify = client.verify("test-apikeys", api_key).await.unwrap();
@@ -43,7 +43,7 @@ async fn client_issue_with_metadata() {
         .execute()
         .await
         .unwrap();
-    assert!(result.api_key.is_some());
+    assert!(result.token.is_some());
 }
 
 #[tokio::test]
@@ -58,7 +58,7 @@ async fn client_revoke() {
 
     client.revoke("test-apikeys", cred_id).await.unwrap();
 
-    let api_key = result.api_key.as_ref().unwrap();
+    let api_key = result.token.as_ref().unwrap();
     let verify = client.verify("test-apikeys", api_key).await;
     assert!(verify.is_err(), "verify after revoke should fail");
 }
@@ -72,7 +72,7 @@ async fn client_suspend_unsuspend() {
 
     let result = client.issue("test-apikeys").execute().await.unwrap();
     let cred_id = result.credential_id.as_ref().unwrap();
-    let api_key = result.api_key.as_ref().unwrap();
+    let api_key = result.token.as_ref().unwrap();
 
     // Suspend
     client.suspend("test-apikeys", cred_id).await.unwrap();
@@ -221,10 +221,10 @@ async fn client_hmac_issue_verify() {
         .execute()
         .await
         .unwrap();
-    assert!(result.signature.is_some());
+    assert!(result.token.is_some());
 
-    let signature = result.signature.as_ref().unwrap();
-    // HMAC verify returns kid (not credential_id), so just check it succeeds
+    let signature = result.token.as_ref().unwrap();
+    // HMAC verify now returns credential_id (the key ID), so just check it succeeds
     let _verify = client
         .verify_with_payload("test-hmac", signature, payload)
         .await
@@ -274,7 +274,7 @@ async fn client_idempotency_key() {
         .unwrap();
 
     assert_eq!(
-        result1.api_key, result2.api_key,
+        result1.token, result2.token,
         "idempotent responses should match"
     );
 }

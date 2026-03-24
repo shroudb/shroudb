@@ -105,11 +105,15 @@ async fn revoke_single(
                 )
                 .await?;
         }
+        KeyspaceType::Jwt => {
+            // JWT revocation is in-memory only (no WAL entry).
+            // JWTs are stateless — the revocation set expires entries via TTL.
+        }
         _ => {
             return Err(CommandError::WrongType {
                 keyspace: ks_name.clone(),
                 actual: format!("{:?}", keyspace.keyspace_type),
-                expected: "api_key or refresh_token".into(),
+                expected: "api_key, refresh_token, or jwt".into(),
             });
         }
     }

@@ -8,12 +8,12 @@ pub async fn handle_health(
     engine: &StorageEngine,
     keyspace_name: Option<&str>,
 ) -> Result<ResponseMap, CommandError> {
-    let state = engine.health();
+    let state = engine.health().to_string().to_lowercase();
 
     match keyspace_name {
         None => {
             // Global health
-            Ok(ResponseMap::ok().with("state", ResponseValue::String(state.to_string())))
+            Ok(ResponseMap::ok().with("state", ResponseValue::String(state)))
         }
         Some(ks_name) => {
             // Per-keyspace detailed health
@@ -30,7 +30,7 @@ pub async fn handle_health(
             let ks = ks.value().clone();
 
             let mut resp = ResponseMap::ok()
-                .with("state", ResponseValue::String(state.to_string()))
+                .with("state", ResponseValue::String(state))
                 .with(
                     "keyspace_type",
                     ResponseValue::String(format!("{:?}", ks.keyspace_type)),

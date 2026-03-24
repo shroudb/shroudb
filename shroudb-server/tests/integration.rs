@@ -26,7 +26,7 @@ async fn health_returns_ready() {
     let mut client = TestClient::connect(server.addr).await;
     let resp = client.cmd(&["HEALTH"]).await;
     assert_ok(&resp, "HEALTH");
-    assert_eq!(resp.get("state").as_str(), "READY");
+    assert_eq!(resp.get("state").as_str(), "ready");
 }
 
 // === ISSUE (API Key) ===
@@ -91,6 +91,41 @@ async fn issue_and_verify_jwt() {
     // Verify
     let resp = client.cmd(&["VERIFY", "test-jwt", &token]).await;
     assert_ok(&resp, "VERIFY JWT");
+}
+
+// === ISSUE + REVOKE + VERIFY (JWT) ===
+#[tokio::test]
+async fn revoke_jwt_by_jti() {
+    let server = TestServer::start().await;
+    let mut client = TestClient::connect(server.addr).await;
+
+    // Two rotations to get an Active signing key
+    let resp = client.cmd(&["ROTATE", "test-jwt", "FORCE"]).await;
+    assert_ok(&resp, "ROTATE 1");
+    let resp = client.cmd(&["ROTATE", "test-jwt", "FORCE"]).await;
+    assert_ok(&resp, "ROTATE 2");
+
+    // Issue JWT
+    let resp = client
+        .cmd(&["ISSUE", "test-jwt", "CLAIMS", r#"{"sub":"user1"}"#])
+        .await;
+    assert_ok(&resp, "ISSUE JWT");
+    let token = resp.get("token").as_str().to_string();
+    let credential_id = resp.get("credential_id").as_str().to_string();
+
+    // Verify works before revocation
+    let resp = client.cmd(&["VERIFY", "test-jwt", &token]).await;
+    assert_ok(&resp, "VERIFY before revoke");
+
+    // Revoke by credential_id (jti)
+    let resp = client.cmd(&["REVOKE", "test-jwt", &credential_id]).await;
+    assert_ok(&resp, "REVOKE JWT");
+
+    // Verify with CHECKREV should fail
+    let resp = client
+        .cmd(&["VERIFY", "test-jwt", &token, "CHECKREV"])
+        .await;
+    assert!(resp.is_error(), "verify after JWT revoke should fail");
 }
 
 // === REVOKE (API Key) ===
