@@ -121,6 +121,7 @@ pub async fn handle_rotate(
                         WalPayload::SigningKeyStateChanged {
                             key_id: s.key_id.clone(),
                             new_state: SigningKeyState::Active,
+                            timestamp: now,
                         },
                     )
                     .await?;
@@ -135,6 +136,7 @@ pub async fn handle_rotate(
                         WalPayload::SigningKeyStateChanged {
                             key_id: a.key_id.clone(),
                             new_state: SigningKeyState::Draining,
+                            timestamp: now,
                         },
                     )
                     .await?;
@@ -238,6 +240,7 @@ pub async fn handle_rotate(
                         WalPayload::SigningKeyStateChanged {
                             key_id: s.key_id.clone(),
                             new_state: SigningKeyState::Active,
+                            timestamp: now,
                         },
                     )
                     .await?;
@@ -252,6 +255,7 @@ pub async fn handle_rotate(
                         WalPayload::SigningKeyStateChanged {
                             key_id: a.key_id.clone(),
                             new_state: SigningKeyState::Draining,
+                            timestamp: now,
                         },
                     )
                     .await?;

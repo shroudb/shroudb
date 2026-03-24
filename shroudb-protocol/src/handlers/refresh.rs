@@ -34,7 +34,11 @@ pub async fn handle_refresh(
             max_chain_length,
             ..
         } => (*token_ttl_secs, *max_chain_length),
-        _ => unreachable!(),
+        _ => {
+            return Err(CommandError::Internal(
+                "keyspace type is RefreshToken but policy variant does not match".into(),
+            ));
+        }
     };
 
     let token_hash = shroudb_crypto::sha256(token.as_bytes());

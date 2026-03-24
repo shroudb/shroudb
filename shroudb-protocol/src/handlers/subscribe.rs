@@ -1,5 +1,5 @@
 use crate::error::CommandError;
-use crate::response::{ResponseMap, ResponseValue};
+use crate::response::ResponseMap;
 
 /// Fallback handler for SUBSCRIBE when invoked outside a persistent TCP connection.
 ///
@@ -8,8 +8,7 @@ use crate::response::{ResponseMap, ResponseValue};
 /// is only reached via non-streaming transports (REST, gRPC) where
 /// server-push is not supported in the same way.
 pub async fn handle_subscribe(_channel: &str) -> Result<ResponseMap, CommandError> {
-    Ok(ResponseMap::ok().with(
-        "message",
-        ResponseValue::String("SUBSCRIBE is only supported on persistent TCP connections".into()),
-    ))
+    Err(CommandError::BadArg {
+        message: "SUBSCRIBE is only supported on persistent TCP connections".into(),
+    })
 }

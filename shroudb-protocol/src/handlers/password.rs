@@ -35,7 +35,11 @@ pub async fn handle_password_set(
             hash_params,
             ..
         } => (*algorithm, hash_params.clone()),
-        _ => unreachable!(),
+        _ => {
+            return Err(CommandError::Internal(
+                "require_password_policy passed but policy is not Password".into(),
+            ));
+        }
     };
 
     let now = SystemTime::now()
@@ -118,7 +122,11 @@ pub async fn handle_password_verify(
             *max_failed_attempts,
             *lockout_duration_secs,
         ),
-        _ => unreachable!(),
+        _ => {
+            return Err(CommandError::Internal(
+                "require_password_policy passed but policy is not Password".into(),
+            ));
+        }
     };
     let ks_name = &keyspace.name;
 
@@ -239,7 +247,11 @@ pub async fn handle_password_change(
     let policy = require_password_policy(keyspace)?;
     let hash_params = match policy {
         KeyspacePolicy::Password { hash_params, .. } => hash_params.clone(),
-        _ => unreachable!(),
+        _ => {
+            return Err(CommandError::Internal(
+                "require_password_policy passed but policy is not Password".into(),
+            ));
+        }
     };
     let ks_name = &keyspace.name;
 
@@ -318,7 +330,11 @@ pub async fn handle_password_reset(
     let policy = require_password_policy(keyspace)?;
     let hash_params = match policy {
         KeyspacePolicy::Password { hash_params, .. } => hash_params.clone(),
-        _ => unreachable!(),
+        _ => {
+            return Err(CommandError::Internal(
+                "require_password_policy passed but policy is not Password".into(),
+            ));
+        }
     };
     let ks_name = &keyspace.name;
 
@@ -386,7 +402,11 @@ pub async fn handle_password_import(
     let policy = require_password_policy(keyspace)?;
     let hash_params = match policy {
         KeyspacePolicy::Password { hash_params, .. } => hash_params.clone(),
-        _ => unreachable!(),
+        _ => {
+            return Err(CommandError::Internal(
+                "require_password_policy passed but policy is not Password".into(),
+            ));
+        }
     };
 
     let hash_bytes = hash.as_bytes();

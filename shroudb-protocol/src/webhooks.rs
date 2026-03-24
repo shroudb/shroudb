@@ -1,9 +1,8 @@
 //! Webhook notification infrastructure for ShrouDB.
 //!
-//! Provides HMAC-signed webhook event dispatch with configurable retry logic.
-//! HTTP delivery is not yet implemented (needs HTTP client dependency) —
-//! tracked in PROJECT.md Phase 5.3. This module handles event types,
-//! HMAC payload signing, configuration, and the async event queue.
+//! Provides HMAC-signed webhook event dispatch with configurable retry logic,
+//! HTTP delivery with exponential backoff, event filtering, and an async
+//! event queue.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
