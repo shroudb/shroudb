@@ -55,11 +55,17 @@ impl<'a> IssueBuilder<'a> {
         let mut args = vec!["ISSUE".to_string(), self.keyspace];
         if let Some(claims) = self.claims {
             args.push("CLAIMS".into());
-            args.push(serde_json::to_string(&claims).unwrap());
+            args.push(
+                serde_json::to_string(&claims)
+                    .map_err(|e| ClientError::Serialization(e.to_string()))?,
+            );
         }
         if let Some(metadata) = self.metadata {
             args.push("META".into());
-            args.push(serde_json::to_string(&metadata).unwrap());
+            args.push(
+                serde_json::to_string(&metadata)
+                    .map_err(|e| ClientError::Serialization(e.to_string()))?,
+            );
         }
         if let Some(ttl) = self.ttl {
             args.push("TTL".into());

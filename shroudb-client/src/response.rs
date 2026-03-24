@@ -340,9 +340,11 @@ impl KeyStateResult {
             return Err(ClientError::Server(e.clone()));
         }
         // KEYSTATE returns a map with a "keys" field containing an array of maps
-        let keys_resp = resp.get_field("keys");
+        let keys_resp = resp.get_field("keys").ok_or_else(|| {
+            ClientError::ResponseFormat("KEYSTATE response missing 'keys' field".into())
+        })?;
         let mut keys = Vec::new();
-        if let Some(Response::Array(items)) = keys_resp {
+        if let Response::Array(items) = keys_resp {
             for item in items {
                 let key_id = item
                     .get_string_field("key_id")
@@ -359,6 +361,11 @@ impl KeyStateResult {
                     version,
                 });
             }
+        } else {
+            return Err(ClientError::ResponseFormat(format!(
+                "expected Array for 'keys' field, got {}",
+                keys_resp.type_name()
+            )));
         }
         Ok(Self { keys })
     }
@@ -387,18 +394,24 @@ pub struct OkResult {
 impl OkResult {
     /// Parse an `OkResult` from a RESP3 map response.
     pub fn from_response(resp: Response) -> Result<Self, ClientError> {
-        if let Response::Error(e) = &resp {
-            if e.contains("DENIED") {
-                return Err(ClientError::AuthRequired);
+        match &resp {
+            Response::Error(e) => {
+                if e.contains("DENIED") {
+                    return Err(ClientError::AuthRequired);
+                }
+                return Err(ClientError::Server(e.clone()));
             }
-            return Err(ClientError::Server(e.clone()));
-        }
-        let mut fields = HashMap::new();
-        if let Response::Map(entries) = &resp {
-            for (k, v) in entries {
-                fields.insert(k.to_display_string(), v.to_json());
+            Response::Map(entries) => {
+                let mut fields = HashMap::new();
+                for (k, v) in entries {
+                    fields.insert(k.to_display_string(), v.to_json());
+                }
+                Ok(Self { fields })
             }
+            _ => Err(ClientError::ResponseFormat(format!(
+                "expected Map response, got {}",
+                resp.type_name()
+            ))),
         }
-        Ok(Self { fields })
     }
 }

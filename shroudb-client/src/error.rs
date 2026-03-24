@@ -18,4 +18,12 @@ pub enum ClientError {
     /// The server requires authentication but none was provided.
     #[error("authentication required")]
     AuthRequired,
+
+    /// JSON serialization failed.
+    #[error("serialization failed: {0}")]
+    Serialization(String),
+
+    /// The server returned an unexpected response format.
+    #[error("unexpected response format: {0}")]
+    ResponseFormat(String),
 }

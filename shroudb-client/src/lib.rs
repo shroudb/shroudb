@@ -239,7 +239,8 @@ impl ShrouDBClient {
         credential_id: &str,
         metadata: serde_json::Value,
     ) -> Result<(), ClientError> {
-        let meta_str = serde_json::to_string(&metadata).unwrap();
+        let meta_str = serde_json::to_string(&metadata)
+            .map_err(|e| ClientError::Serialization(e.to_string()))?;
         let resp = self
             .connection
             .send_command_strs(&["UPDATE", keyspace, credential_id, "META", &meta_str])
@@ -440,6 +441,9 @@ impl ShrouDBClient {
 }
 
 /// Check that a response indicates success (not an error).
+///
+/// Accepts any non-error response (String "OK", Map with status, etc.)
+/// since different commands return different success shapes.
 fn check_ok_status(resp: Response) -> Result<(), ClientError> {
     match &resp {
         Response::Error(e) => {
@@ -449,6 +453,9 @@ fn check_ok_status(resp: Response) -> Result<(), ClientError> {
                 Err(ClientError::Server(e.clone()))
             }
         }
+        Response::Null => Err(ClientError::ResponseFormat(
+            "expected success response, got null".into(),
+        )),
         _ => Ok(()),
     }
 }

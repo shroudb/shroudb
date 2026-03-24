@@ -172,9 +172,41 @@ fn read_value(
                 }
                 Ok(Response::Map(entries))
             }
+            // RESP3 Boolean: #t\r\n or #f\r\n
+            b'#' => match payload {
+                "t" => Ok(Response::String("true".to_string())),
+                "f" => Ok(Response::String("false".to_string())),
+                _ => Err(ClientError::Protocol(format!(
+                    "invalid boolean value: {payload}"
+                ))),
+            },
+            // RESP3 Double: ,3.14\r\n
+            b',' => Ok(Response::String(payload.to_string())),
+            // RESP3 Push (server-initiated): treat like Array
+            b'>' => {
+                let count: i64 = payload
+                    .parse()
+                    .map_err(|e| ClientError::Protocol(format!("invalid push length: {e}")))?;
+                let mut items = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    items.push(read_value(reader).await?);
+                }
+                Ok(Response::Array(items))
+            }
+            // RESP3 Set: treat like Array
+            b'~' => {
+                let count: i64 = payload
+                    .parse()
+                    .map_err(|e| ClientError::Protocol(format!("invalid set length: {e}")))?;
+                let mut items = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    items.push(read_value(reader).await?);
+                }
+                Ok(Response::Array(items))
+            }
             _ => Err(ClientError::Protocol(format!(
-                "unknown response type: {}",
-                type_byte as char
+                "unsupported RESP3 type: '{}' (0x{:02x})",
+                type_byte as char, type_byte
             ))),
         }
     })
