@@ -12,7 +12,7 @@ RUN --mount=type=secret,id=git_auth,env=GIT_AUTH_URL \
 FROM gcr.io/distroless/static-debian12:nonroot AS shroudb
 COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/shroudb /shroudb
 USER nonroot:nonroot
-EXPOSE 6399
+EXPOSE 6399 9090
 ENTRYPOINT ["/shroudb"]
 
 # --- shroudb-cli: command-line client ---

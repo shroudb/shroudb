@@ -178,21 +178,75 @@ shroudb purge my-keyspace --config config.toml
 
 ## Docker
 
+### Image
+
+```
+ghcr.io/shroudb/shroudb:latest
+```
+
+### Ports
+
+| Port | Purpose |
+|------|---------|
+| `6399` | RESP3 command protocol |
+| `9090` | Prometheus metrics (`/metrics`) |
+
+### Volume
+
+Mount a volume at `/data` for durable storage (WAL segments + snapshots). Without a volume, data is lost when the container stops.
+
+### Environment
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SHROUDB_MASTER_KEY` | Yes (production) | 64 hex characters. Encrypts all data at rest. |
+| `SHROUDB_MASTER_KEY_FILE` | Alternative | Path to a file containing the master key. |
+| `RUST_LOG` | No | Log level (`info`, `debug`, `warn`). Default: `info`. |
+
+Without a master key the server starts in dev mode with an ephemeral key — data will not survive restarts.
+
+### Config File
+
+Mount your config at any path and pass `--config`:
+
 ```sh
-docker build -t shroudb .
 docker run -p 6399:6399 -p 9090:9090 \
   -e SHROUDB_MASTER_KEY="$(openssl rand -hex 32)" \
   -v shroudb-data:/data \
-  shroudb
+  -v ./config.toml:/config.toml:ro \
+  ghcr.io/shroudb/shroudb:latest --config /config.toml
 ```
 
-Or with Docker Compose:
+See [`config.example.toml`](config.example.toml) for all options.
+
+### Docker Compose
+
+```yaml
+services:
+  shroudb:
+    image: ghcr.io/shroudb/shroudb:latest
+    ports:
+      - "6399:6399"
+      - "9090:9090"
+    environment:
+      - SHROUDB_MASTER_KEY=${SHROUDB_MASTER_KEY}
+      - RUST_LOG=info
+    volumes:
+      - shroudb-data:/data
+      - ./config.toml:/config.toml:ro
+    command: ["--config", "/config.toml"]
+    restart: unless-stopped
+
+volumes:
+  shroudb-data:
+```
 
 ```sh
+export SHROUDB_MASTER_KEY="$(openssl rand -hex 32)"
 docker compose up -d
 ```
 
-A systemd unit file is provided in `shroudb.service`.
+A systemd unit file is provided in [`shroudb.service`](shroudb.service).
 
 ## Architecture
 
