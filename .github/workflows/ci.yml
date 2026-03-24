@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Configure git auth for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -28,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Configure git auth for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
@@ -37,6 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Configure git auth for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit --quiet
@@ -47,6 +53,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Configure git auth for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-deny --quiet
       - run: cargo deny check
@@ -56,6 +64,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Configure git auth for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -77,6 +87,8 @@ jobs:
             os: macos-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Configure git auth for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -122,6 +134,8 @@ jobs:
             target: shroudb-cli
     steps:
       - uses: actions/checkout@v5
+      - name: Configure git auth for private deps
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
