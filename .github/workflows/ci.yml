@@ -102,18 +102,17 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Install musl cross tools (Linux aarch64)
+      - name: Install cross (Linux aarch64)
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          curl -fsSL https://more.musl.cc/10/x86_64-linux-musl/aarch64-linux-musl-cross.tgz | sudo tar xz -C /opt
-          echo "/opt/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
-          mkdir -p .cargo
-          printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-musl-gcc"\n' >> .cargo/config.toml
+        run: curl -fsSL https://github.com/cross-rs/cross/releases/latest/download/cross-x86_64-unknown-linux-musl.tar.gz | sudo tar xz -C /usr/local/bin
 
-      - name: Build
+      - name: Build (cargo)
+        if: matrix.target != 'aarch64-unknown-linux-musl'
         run: cargo build --release --target ${{ matrix.target }} -p shroudb -p shroudb-cli
-        env:
-          CC_aarch64_unknown_linux_musl: aarch64-linux-musl-gcc
+
+      - name: Build (cross)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: cross build --release --target ${{ matrix.target }} -p shroudb -p shroudb-cli
 
       - name: Package
         run: |

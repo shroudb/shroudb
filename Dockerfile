@@ -18,14 +18,27 @@ RUN --mount=type=secret,id=git_auth,env=GIT_AUTH_URL \
     cp "target/$RUST_TARGET/release/shroudb-cli" /out/
 
 # --- shroudb: credential management server ---
-FROM gcr.io/distroless/static-debian12:nonroot AS shroudb
+FROM scratch AS shroudb
+LABEL org.opencontainers.image.title="ShrouDB" \
+      org.opencontainers.image.description="Encrypted credential vault with key rotation, RESP3 protocol, and WAL storage" \
+      org.opencontainers.image.vendor="ShrouDB" \
+      org.opencontainers.image.url="https://github.com/shroudb/shroudb" \
+      org.opencontainers.image.source="https://github.com/shroudb/shroudb" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0"
 COPY --from=builder /out/shroudb /shroudb
-USER nonroot:nonroot
+USER 65532:65532
+VOLUME /data
 EXPOSE 6399 9090
 ENTRYPOINT ["/shroudb"]
 
 # --- shroudb-cli: command-line client ---
-FROM gcr.io/distroless/static-debian12:nonroot AS shroudb-cli
+FROM scratch AS shroudb-cli
+LABEL org.opencontainers.image.title="ShrouDB CLI" \
+      org.opencontainers.image.description="Command-line client for ShrouDB credential vault" \
+      org.opencontainers.image.vendor="ShrouDB" \
+      org.opencontainers.image.url="https://github.com/shroudb/shroudb" \
+      org.opencontainers.image.source="https://github.com/shroudb/shroudb" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0"
 COPY --from=builder /out/shroudb-cli /shroudb-cli
-USER nonroot:nonroot
+USER 65532:65532
 ENTRYPOINT ["/shroudb-cli"]
