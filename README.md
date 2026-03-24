@@ -1,85 +1,111 @@
 # ShrouDB
 
-A credential management server built in Rust. ShrouDB manages JWT signing keys, API keys, HMAC secrets, and refresh tokens with encrypted-at-rest storage, automatic key rotation, and a RESP3 wire protocol.
+A credential management server built in Rust. Manages JWT signing keys, API keys, HMAC secrets, refresh tokens, and passwords with encrypted-at-rest storage, automatic key rotation, and a RESP3 wire protocol.
 
-## Quickstart
+## Features
 
-```bash
-# 1. Build
-cargo build --release
+- **Five keyspace types:** JWT, API key, HMAC, refresh token, and password
+- **JWT algorithms:** ES256, ES384, RS256, RS384, RS512, EdDSA with automatic key rotation
+- **Password hashing:** Argon2id, bcrypt, scrypt with lockout and transparent rehash
+- **Encrypted storage:** AES-256-GCM at rest, per-keyspace derived keys (HKDF-SHA256), WAL + snapshots
+- **Dual protocol:** RESP3 (port 6399) and REST API (port 8080)
+- **TLS and mTLS** on the RESP3 protocol, with Unix socket support
+- **Access control:** token-based auth with per-policy keyspace and command restrictions
+- **Metadata schemas:** optional typed, validated metadata on credentials with immutable field support
+- **Pub/sub:** real-time event notifications on keyspace channels
+- **Pipelining:** batch multiple commands in a single round-trip
+- **Security hardened:** `mlock`-pinned secrets, zeroize-on-drop, core dumps disabled, constant-time comparisons
 
-# 2. Run (dev mode — ephemeral master key, human-readable logs)
-./target/release/shroudb
+## Quick Start
 
-# 3. Connect with the CLI
+```sh
+# Build and run (dev mode — ephemeral master key, human-readable logs)
+cargo run
+
+# Connect with the CLI
 cargo run --bin shroudb-cli
+
+# Or with a config file
+cargo run -- --config config.toml
 ```
 
 The server listens on `0.0.0.0:6399` (RESP3) and `0.0.0.0:8080` (REST) by default.
 
 ## Connection String
 
-ShrouDB uses a URI scheme for connection strings:
-
 ```
 shroudb://[token@]host[:port][/keyspace]
 shroudb+tls://[token@]host[:port][/keyspace]
 ```
 
-| Scheme        | Transport |
-|---------------|-----------|
-| `shroudb://`    | Plain TCP |
-| `shroudb+tls://`| TLS       |
-
-**Examples:**
+Examples:
 
 ```
 shroudb://localhost                        # plain TCP, default port 6399
-shroudb://localhost:6399                   # explicit port
-shroudb+tls://prod.example.com            # TLS, default port
+shroudb+tls://prod.example.com            # TLS
 shroudb://mytoken@localhost:6399           # with auth token
 shroudb+tls://tok@host:6399/sessions      # TLS + auth + default keyspace
 ```
 
-The CLI supports `--uri` as an alternative to `--host`/`--port`/`--tls`:
-
-```bash
+```sh
 shroudb-cli --uri shroudb://localhost:6399
-shroudb-cli --uri shroudb+tls://mytoken@prod.example.com/sessions
 ```
 
-## Version
+## Configuration
 
-```bash
-shroudb --version
-shroudb-cli --version
+Copy and edit the example config:
+
+```sh
+cp config.example.toml config.toml
+./target/release/shroudb --config config.toml
 ```
 
-## Health Check
+Environment variables can be interpolated with `${VAR_NAME}` syntax.
 
-Run `shroudb doctor` to verify system health without starting the server:
+```toml
+[server]
+bind = "0.0.0.0:6399"
+rest_bind = "0.0.0.0:8080"
+# tls_cert = "/path/to/cert.pem"
+# tls_key = "/path/to/key.pem"
+# tls_client_ca = "/path/to/ca.pem"  # mTLS
 
-```bash
-shroudb doctor --config config.toml
+[storage]
+data_dir = "./data"
+wal_fsync_mode = "batched"
+wal_fsync_interval_ms = 10
+
+[keyspaces.auth-tokens]
+type = "jwt"
+algorithm = "ES256"
+rotation_days = 90
+default_ttl = "15m"
+
+[keyspaces.service-keys]
+type = "api_key"
+prefix = "sk"
+
+[keyspaces.sessions]
+type = "refresh_token"
+token_ttl = "30d"
+
+[keyspaces.users]
+type = "password"
+algorithm = "argon2id"
+max_failed_attempts = 5
+lockout_duration = "15m"
+
+# [auth]
+# method = "token"
+# [auth.policies.admin]
+# token = "${SHROUDB_ADMIN_TOKEN}"
+# keyspaces = ["*"]
+# commands = ["*"]
 ```
-
-```
-Config:     PASS  (config.toml parsed, 4 keyspaces defined)
-Master Key: PASS  (loaded from SHROUDB_MASTER_KEY)
-Data Dir:   PASS  (./data exists, writable)
-WAL:        PASS  (3 segments, 15234 entries, no corruption)
-Snapshot:   PASS  (latest: snap_20240322_143000_abcd1234.bin, 4 keyspaces, 12345 credentials)
-```
-
-The command exits with code 0 if all checks pass, 1 if any check fails.
-
-## Production Setup
 
 ### Master Key
 
-Set a 32-byte hex-encoded master key before starting:
-
-```bash
+```sh
 # Generate a key
 openssl rand -hex 32
 
@@ -87,22 +113,89 @@ openssl rand -hex 32
 export SHROUDB_MASTER_KEY="<64-hex-chars>"
 
 # Or via file
-echo -n "<64-hex-chars>" > /etc/shroudb/master.key
 export SHROUDB_MASTER_KEY_FILE="/etc/shroudb/master.key"
 ```
 
-### Configuration
+Without a master key, the server starts in dev mode with an ephemeral key — data will not survive restarts.
 
-Copy and edit the example config:
+## Keyspace Types
 
-```bash
-cp config.example.toml config.toml
-./target/release/shroudb --config config.toml
+| Type | Description |
+|------|-------------|
+| `jwt` | Asymmetric signing keys with automatic rotation and JWKS endpoint |
+| `api_key` | Bearer tokens with SHA-256 hashed storage and optional prefix |
+| `hmac` | Symmetric HMAC keys (SHA-256/384/512) with rotation |
+| `refresh_token` | Rotating refresh tokens with family-based revocation and chain tracking |
+| `password` | Argon2id/bcrypt/scrypt password hashing with lockout and transparent rehash |
+
+## Commands (RESP3)
+
+| Command | Description |
+|---------|-------------|
+| `ISSUE <ks> [CLAIMS <json>] [META <json>] [TTL <s>]` | Issue a credential |
+| `VERIFY <ks> <token> [PAYLOAD <data>] [CHECKREV]` | Verify a credential |
+| `REVOKE <ks> <id> \| FAMILY <fid> \| BULK <ids...>` | Revoke credentials |
+| `REFRESH <ks> <token>` | Rotate a refresh token |
+| `UPDATE <ks> <id> META <json>` | Update credential metadata |
+| `INSPECT <ks> <id>` | Get full credential details |
+| `ROTATE <ks> [FORCE] [NOWAIT] [DRYRUN]` | Rotate signing keys |
+| `JWKS <ks>` | Get the JSON Web Key Set |
+| `KEYSTATE <ks>` | Show key ring state |
+| `KEYS <ks> [CURSOR <c>] [MATCH <p>] [STATE <s>] [COUNT <n>]` | List credentials |
+| `SUSPEND / UNSUSPEND <ks> <id>` | Suspend or reactivate a credential |
+| `SCHEMA <ks>` | Display metadata schema |
+| `PASSWORD SET <ks> <uid> <pw> [META <json>]` | Set a password |
+| `PASSWORD VERIFY <ks> <uid> <pw>` | Verify a password |
+| `PASSWORD CHANGE <ks> <uid> <old> <new>` | Change a password |
+| `PASSWORD IMPORT <ks> <uid> <hash> [META <json>]` | Import a pre-hashed password |
+| `SUBSCRIBE <channel>` | Subscribe to events |
+| `PIPELINE ... END` | Batch commands |
+| `AUTH <token>` | Authenticate connection |
+| `CONFIG GET / SET <key> [<value>]` | Runtime config |
+| `HEALTH [<ks>]` | Health check |
+
+See [PROTOCOL.md](PROTOCOL.md) for the full wire protocol specification.
+
+## REST API
+
+Available when `rest_bind` is configured:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/{ks}/issue` | Issue a credential |
+| `POST` | `/v1/{ks}/verify` | Verify a credential |
+| `POST` | `/v1/{ks}/revoke` | Revoke a credential |
+| `POST` | `/v1/{ks}/refresh` | Rotate a refresh token |
+| `GET` | `/v1/{ks}/jwks` | JSON Web Key Set |
+| `GET` | `/v1/{ks}/keys` | List credentials |
+| `GET` | `/v1/{ks}/{id}` | Inspect a credential |
+| `PUT` | `/v1/{ks}/{id}` | Update credential metadata |
+| `DELETE` | `/v1/{ks}/{id}` | Revoke a credential |
+| `GET` | `/health` | Health check |
+| `GET` | `/metrics` | Prometheus metrics |
+
+## Operational Commands
+
+```sh
+# Health check without starting the server
+shroudb doctor --config config.toml
+
+# Re-key (rotate master encryption key — server must be stopped)
+shroudb rekey --old-key <old> --new-key <new> --config config.toml
+
+# Export a keyspace to an encrypted bundle
+shroudb export my-keyspace --output backup.kvex --config config.toml
+
+# Import into another instance (same master key required)
+shroudb import --file backup.kvex --keyspace my-keyspace --config config.toml
+
+# Purge a keyspace
+shroudb purge my-keyspace --config config.toml
 ```
 
-### Docker
+## Docker
 
-```bash
+```sh
 docker build -t shroudb .
 docker run -p 6399:6399 -p 8080:8080 \
   -e SHROUDB_MASTER_KEY="$(openssl rand -hex 32)" \
@@ -112,114 +205,18 @@ docker run -p 6399:6399 -p 8080:8080 \
 
 Or with Docker Compose:
 
-```bash
+```sh
 docker compose up -d
 ```
 
-### Docker Compose
-
-See `docker-compose.yml` for a ready-to-use configuration with persistent volume.
-
-### systemd
-
-See `shroudb.service` for a production systemd unit file. Install with:
-
-```bash
-sudo cp target/release/shroudb /usr/local/bin/
-sudo cp shroudb.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now shroudb
-```
-
-## Keyspace Types
-
-| Type | Description |
-|------|-------------|
-| `jwt` | Asymmetric signing keys (ES256, ES384, RS256, RS384, RS512, EdDSA) with automatic rotation |
-| `api_key` | Bearer tokens with SHA-256 hashed storage, optional prefix, and metadata |
-| `hmac` | Symmetric HMAC keys (SHA-256/384/512) with rotation support |
-| `refresh_token` | Rotating refresh tokens with family-based revocation and chain tracking |
-| `password` | Argon2id/bcrypt/scrypt password hashing with rate limiting and lockout |
-
-## Commands (RESP3 Protocol)
-
-```
-ISSUE <keyspace> [CLAIMS <json>] [META <json>] [TTL <secs>]
-VERIFY <keyspace> <token> [PAYLOAD <data>] [CHECKREV]
-REVOKE <keyspace> <id>
-REFRESH <keyspace> <token>
-UPDATE <keyspace> <credential_id> META <json>
-INSPECT <keyspace> <credential_id>
-ROTATE <keyspace> [FORCE] [NOWAIT] [DRYRUN]
-JWKS <keyspace>
-KEYSTATE <keyspace>
-HEALTH [<keyspace>]
-KEYS <keyspace> [CURSOR <c>] [PATTERN <glob>] [STATE <state>] [COUNT <n>]
-SUSPEND <keyspace> <credential_id>
-UNSUSPEND <keyspace> <credential_id>
-SCHEMA <keyspace>
-PASSWORD SET <keyspace> <user_id> <password> [META <json>]
-PASSWORD VERIFY <keyspace> <user_id> <password>
-PASSWORD CHANGE <keyspace> <user_id> <old_password> <new_password>
-PASSWORD IMPORT <keyspace> <user_id> <hash> [META <json>]
-```
-
-## REST API
-
-When `rest_bind` is configured, the REST API is available:
-
-```
-POST   /v1/{keyspace}/issue
-POST   /v1/{keyspace}/verify
-POST   /v1/{keyspace}/revoke
-POST   /v1/{keyspace}/refresh
-GET    /v1/{keyspace}/jwks
-GET    /v1/{keyspace}/keys
-GET    /v1/{keyspace}/{credential_id}
-PUT    /v1/{keyspace}/{credential_id}
-DELETE /v1/{keyspace}/{credential_id}
-GET    /health
-GET    /metrics
-```
-
-## Operational Commands
-
-### Re-key (rotate master encryption key)
-
-```bash
-shroudb rekey --old-key <old-hex-key> --new-key <new-hex-key> --config config.toml
-```
-
-This re-encrypts all WAL segments and snapshots. The server must be stopped first. After rekeying, update `SHROUDB_MASTER_KEY` to the new key before restarting.
-
-### Export / Import
-
-```bash
-# Export a keyspace to an encrypted bundle
-shroudb export my-keyspace --output backup.kvex --config config.toml
-
-# Import into another instance (same master key required)
-shroudb import --file backup.kvex --keyspace my-keyspace --config config.toml
-```
-
-### Purge
-
-```bash
-shroudb purge my-keyspace --config config.toml
-```
+A systemd unit file is provided in `shroudb.service`.
 
 ## Architecture
 
-- **Storage:** Write-ahead log (WAL) with periodic snapshots. All data is AES-256-GCM encrypted at rest with per-keyspace derived keys (HKDF-SHA256).
-- **Protocol:** RESP3 wire protocol — chosen for its battle-tested framing, binary safety, and familiar ergonomics. ShrouDB speaks its own command set (ISSUE, VERIFY, REVOKE, etc.) over RESP3; it is not a Redis-compatible server and Redis clients will not work against it.
-- **REST:** Axum-based HTTP API running on a separate port.
-- **Security:** `mlock`-pinned secret memory, zeroize-on-drop, core dump disabled, constant-time comparisons.
-
-## TLS
-
-TLS is supported for the RESP3 protocol via `tls_cert` and `tls_key` in the server config. Mutual TLS (mTLS) is supported via `tls_client_ca`.
-
-For the REST API, TLS termination should be handled by a reverse proxy (nginx, Caddy, or a cloud load balancer) in production. The REST server runs on a separate port and is typically behind a load balancer.
+- **Storage:** Write-ahead log (WAL) with periodic snapshots, AES-256-GCM encrypted at rest with per-keyspace derived keys (HKDF-SHA256)
+- **RESP3 protocol:** Battle-tested framing with ShrouDB's own command set — not Redis-compatible
+- **REST:** Axum-based HTTP API on a separate port
+- **Workspace crates:** `shroudb-server`, `shroudb-protocol`, `shroudb-client`, `shroudb-cli`
 
 ## License
 
