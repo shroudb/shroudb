@@ -1,11 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use metrics::counter;
 use shroudb_core::{
     CredentialId, Keyspace, KeyspacePolicy, PasswordAlgorithm, PasswordEntry, PasswordState,
     metadata_from_json,
 };
 use shroudb_storage::{OpType, StorageEngine, WalPayload};
-use metrics::counter;
 
 use crate::error::CommandError;
 use crate::response::{ResponseMap, ResponseValue};
@@ -158,7 +158,8 @@ pub async fn handle_password_verify(
     let valid = shroudb_crypto::password_verify(plaintext.as_bytes(), &entry.hash)?;
 
     if !valid {
-        counter!("shroudb_password_verify_failed_total", "keyspace" => ks_name.clone()).increment(1);
+        counter!("shroudb_password_verify_failed_total", "keyspace" => ks_name.clone())
+            .increment(1);
         // Record failed attempt
         if let Some(limiter) = engine.index().password_rate_limiters.get(ks_name) {
             limiter.record_failure(user_id);

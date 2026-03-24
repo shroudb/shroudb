@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use metrics::gauge;
 use shroudb_protocol::auth::AuthPolicy;
 use shroudb_protocol::resp3::Resp3Frame;
 use shroudb_protocol::resp3::parse_command::parse_command;
@@ -9,7 +10,6 @@ use shroudb_protocol::resp3::serialize::response_to_frame;
 use shroudb_protocol::resp3::writer::write_frame;
 use shroudb_protocol::response::{ResponseMap, ResponseValue};
 use shroudb_protocol::{CommandDispatcher, CommandResponse};
-use metrics::gauge;
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::broadcast;
 use tokio::sync::watch;

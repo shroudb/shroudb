@@ -1,8 +1,8 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use metrics::histogram;
 use shroudb_core::{ApiKeyState, KeyId, Keyspace, KeyspacePolicy, RefreshTokenState};
 use shroudb_storage::StorageEngine;
-use metrics::histogram;
 
 use crate::error::CommandError;
 use crate::response::{ResponseMap, ResponseValue};

@@ -2,12 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use metrics::gauge;
 use shroudb_core::KeyspacePolicy;
 use shroudb_protocol::auth::AuthPolicy;
 use shroudb_protocol::{Command, CommandDispatcher};
 use shroudb_storage::StorageEngine;
 use shroudb_storage::snapshot::SnapshotReader;
-use metrics::gauge;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 

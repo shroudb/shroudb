@@ -1,10 +1,10 @@
 //! shroudb-cli — interactive command-line client for ShrouDB.
 
 use clap::Parser;
-use shroudb_client::Response;
-use shroudb_client::connection::Connection;
 use rustyline::error::ReadlineError;
 use rustyline::hint::HistoryHinter;
+use shroudb_client::Response;
+use shroudb_client::connection::Connection;
 
 /// Known command names for tab completion.
 const COMMANDS: &[&str] = &[
@@ -75,7 +75,11 @@ impl rustyline::Helper for ShrouDBHelper {}
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "shroudb-cli", about = "Interactive client for ShrouDB", version)]
+#[command(
+    name = "shroudb-cli",
+    about = "Interactive client for ShrouDB",
+    version
+)]
 struct Cli {
     /// Connection URI (e.g., shroudb://localhost:6399, shroudb+tls://token@host:6399/keyspace).
     /// Overrides --host, --port, and --tls when provided.

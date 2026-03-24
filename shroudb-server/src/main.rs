@@ -251,7 +251,9 @@ async fn main() -> anyhow::Result<()> {
 /// Resolve the master key source: try env/file first, fall back to ephemeral.
 fn resolve_master_key() -> anyhow::Result<Box<dyn MasterKeySource>> {
     // Check if SHROUDB_MASTER_KEY or SHROUDB_MASTER_KEY_FILE is set.
-    if std::env::var("SHROUDB_MASTER_KEY").is_ok() || std::env::var("SHROUDB_MASTER_KEY_FILE").is_ok() {
+    if std::env::var("SHROUDB_MASTER_KEY").is_ok()
+        || std::env::var("SHROUDB_MASTER_KEY_FILE").is_ok()
+    {
         return Ok(Box::new(ChainedMasterKeySource::default_chain()));
     }
 
@@ -624,10 +626,12 @@ async fn handle_export(config_path: &Path, keyspace: &str, output: &Path) -> any
                     pk.as_bytes(),
                     b"export_pk",
                 )?;
-                encrypted_private_keys.push(shroudb_storage::snapshot::format::EncryptedPrivateKey {
-                    key_id: key.key_id.clone(),
-                    encrypted_bytes: encrypted,
-                });
+                encrypted_private_keys.push(
+                    shroudb_storage::snapshot::format::EncryptedPrivateKey {
+                        key_id: key.key_id.clone(),
+                        encrypted_bytes: encrypted,
+                    },
+                );
             }
         }
     }
@@ -641,10 +645,12 @@ async fn handle_export(config_path: &Path, keyspace: &str, output: &Path) -> any
                     km.as_bytes(),
                     b"export_pk",
                 )?;
-                encrypted_private_keys.push(shroudb_storage::snapshot::format::EncryptedPrivateKey {
-                    key_id: key.key_id.clone(),
-                    encrypted_bytes: encrypted,
-                });
+                encrypted_private_keys.push(
+                    shroudb_storage::snapshot::format::EncryptedPrivateKey {
+                        key_id: key.key_id.clone(),
+                        encrypted_bytes: encrypted,
+                    },
+                );
             }
         }
     }

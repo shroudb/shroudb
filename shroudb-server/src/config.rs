@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
+use serde::Deserialize;
 use shroudb_core::{
     FieldDef, FieldType, HashParams, Keyspace, KeyspacePolicy, KeyspaceType, MetaSchema,
     MetadataValue, Namespace, PasswordAlgorithm, UnixTimestamp,
@@ -10,7 +11,6 @@ use shroudb_core::{
 use shroudb_crypto::{HmacAlgorithm, JwtAlgorithm};
 use shroudb_protocol::auth::{AuthPolicy, AuthRegistry};
 use shroudb_storage::{StorageEngineConfig, wal::writer::FsyncMode};
-use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
 // TOML config structs
