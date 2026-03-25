@@ -19,7 +19,8 @@ RUN --mount=type=secret,id=git_auth,env=GIT_AUTH_URL \
 
 # --- shroudb: credential management server ---
 FROM alpine:3.21 AS shroudb
-RUN adduser -D -u 65532 shroudb
+RUN adduser -D -u 65532 shroudb && \
+    mkdir /data && chown shroudb:shroudb /data
 LABEL org.opencontainers.image.title="ShrouDB" \
       org.opencontainers.image.description="Encrypted credential vault with key rotation, RESP3 protocol, and WAL storage" \
       org.opencontainers.image.vendor="ShrouDB" \
@@ -27,8 +28,9 @@ LABEL org.opencontainers.image.title="ShrouDB" \
       org.opencontainers.image.source="https://github.com/shroudb/shroudb" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 COPY --from=builder /out/shroudb /shroudb
-USER shroudb
 VOLUME /data
+WORKDIR /data
+USER shroudb
 EXPOSE 6399 9090
 ENTRYPOINT ["/shroudb"]
 
