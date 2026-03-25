@@ -49,6 +49,20 @@ pub async fn handle_issue(
             })?;
 
             let mut claims = claims.unwrap_or(serde_json::json!({}));
+
+            // Merge metadata fields as top-level JWT claims (aud, roles, scope, etc.).
+            // This runs before reserved-field defaults so callers can pass metadata
+            // without manually duplicating fields into claims.
+            if let Some(meta) = &metadata
+                && let Some(obj) = meta.as_object()
+            {
+                for (k, v) in obj {
+                    if !claims.as_object().is_some_and(|c| c.contains_key(k)) {
+                        claims[k] = v.clone();
+                    }
+                }
+            }
+
             // Set exp if not present
             if claims.get("exp").is_none() {
                 let ttl = ttl_secs.unwrap_or(*default_ttl_secs);

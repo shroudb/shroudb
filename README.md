@@ -133,7 +133,7 @@ Without a master key, the server starts in dev mode with an ephemeral key — da
 
 | Command | Description |
 |---------|-------------|
-| `ISSUE <ks> [CLAIMS <json>] [META <json>] [TTL <s>]` | Issue a credential |
+| `ISSUE <ks> [CLAIMS <json>] [META <json>] [TTL <s>]` | Issue a credential (JWT: metadata fields merge as top-level claims) |
 | `VERIFY <ks> <token> [PAYLOAD <data>] [CHECKREV]` | Verify a credential |
 | `REVOKE <ks> <id> \| FAMILY <fid> \| BULK <ids...>` | Revoke credentials |
 | `REFRESH <ks> <token>` | Rotate a refresh token |
