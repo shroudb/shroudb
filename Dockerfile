@@ -18,7 +18,8 @@ RUN --mount=type=secret,id=git_auth,env=GIT_AUTH_URL \
     cp "target/$RUST_TARGET/release/shroudb-cli" /out/
 
 # --- shroudb: credential management server ---
-FROM scratch AS shroudb
+FROM alpine:3.21 AS shroudb
+RUN adduser -D -u 65532 shroudb
 LABEL org.opencontainers.image.title="ShrouDB" \
       org.opencontainers.image.description="Encrypted credential vault with key rotation, RESP3 protocol, and WAL storage" \
       org.opencontainers.image.vendor="ShrouDB" \
@@ -26,13 +27,14 @@ LABEL org.opencontainers.image.title="ShrouDB" \
       org.opencontainers.image.source="https://github.com/shroudb/shroudb" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 COPY --from=builder /out/shroudb /shroudb
-USER 65532:65532
+USER shroudb
 VOLUME /data
 EXPOSE 6399 9090
 ENTRYPOINT ["/shroudb"]
 
 # --- shroudb-cli: command-line client ---
-FROM scratch AS shroudb-cli
+FROM alpine:3.21 AS shroudb-cli
+RUN adduser -D -u 65532 shroudb
 LABEL org.opencontainers.image.title="ShrouDB CLI" \
       org.opencontainers.image.description="Command-line client for ShrouDB credential vault" \
       org.opencontainers.image.vendor="ShrouDB" \
@@ -40,5 +42,5 @@ LABEL org.opencontainers.image.title="ShrouDB CLI" \
       org.opencontainers.image.source="https://github.com/shroudb/shroudb" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 COPY --from=builder /out/shroudb-cli /shroudb-cli
-USER 65532:65532
+USER shroudb
 ENTRYPOINT ["/shroudb-cli"]
