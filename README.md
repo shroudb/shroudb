@@ -11,7 +11,7 @@ A credential management server built in Rust. Manages JWT signing keys, API keys
 - **RESP3 wire protocol** on port 6399 with pipelining support
 - **TLS and mTLS** on the RESP3 protocol, with Unix socket support
 - **Access control:** token-based auth with per-policy keyspace and command restrictions
-- **Metadata schemas:** optional typed, validated metadata on credentials with immutable field support
+- **Metadata schemas:** optional typed, validated metadata on all credential types (API keys, refresh tokens, passwords) with immutable field support
 - **Pub/sub:** real-time event notifications on keyspace channels
 - **Prometheus metrics** on port 9090 (`/metrics` scrape endpoint)
 - **Webhook notifications** with HMAC-signed HTTP delivery and configurable retries

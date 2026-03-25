@@ -125,10 +125,65 @@ pub async fn handle_update(
 
             Ok(ResponseMap::ok())
         }
+        KeyspaceType::Password => {
+            let idx =
+                engine
+                    .index()
+                    .passwords
+                    .get(ks_name)
+                    .ok_or_else(|| CommandError::NotFound {
+                        entity: "index".into(),
+                        id: ks_name.clone(),
+                    })?;
+            let entry = idx
+                .lookup_by_credential_id(credential_id_str)
+                .ok_or_else(|| CommandError::NotFound {
+                    entity: "password".into(),
+                    id: credential_id_str.to_string(),
+                })?;
+
+            if entry.state != shroudb_core::PasswordState::Active {
+                return Err(CommandError::Denied {
+                    reason: "credential is not active".into(),
+                });
+            }
+
+            let merged = if let Some(schema) = &keyspace.meta_schema {
+                if schema.enforce {
+                    schema
+                        .validate_update(&entry.metadata, &patch)
+                        .map_err(|errs| {
+                            CommandError::ValidationError(
+                                errs.iter()
+                                    .map(|e| e.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join("; "),
+                            )
+                        })?
+                } else {
+                    merge_metadata(&entry.metadata, &patch)
+                }
+            } else {
+                merge_metadata(&entry.metadata, &patch)
+            };
+
+            engine
+                .apply(
+                    ks_name,
+                    OpType::PasswordUpdated,
+                    WalPayload::PasswordUpdated {
+                        credential_id: credential_id.clone(),
+                        metadata: merged,
+                    },
+                )
+                .await?;
+
+            Ok(ResponseMap::ok())
+        }
         _ => Err(CommandError::WrongType {
             keyspace: ks_name.clone(),
             actual: format!("{:?}", keyspace.keyspace_type),
-            expected: "api_key or refresh_token".into(),
+            expected: "api_key, refresh_token, or password".into(),
         }),
     }
 }

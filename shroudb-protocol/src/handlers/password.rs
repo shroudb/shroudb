@@ -66,10 +66,24 @@ pub async fn handle_password_set(
     )?;
 
     let credential_id = CredentialId::new();
-    let meta = metadata_json
+    let mut meta = metadata_json
         .map(|v| metadata_from_json(v).map_err(CommandError::ValidationError))
         .transpose()?
         .unwrap_or_default();
+
+    // Validate metadata against schema if present and enforced
+    if let Some(schema) = &keyspace.meta_schema
+        && schema.enforce
+    {
+        schema.validate(&mut meta).map_err(|errs| {
+            CommandError::ValidationError(
+                errs.iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        })?;
+    }
 
     let entry = PasswordEntry {
         credential_id: credential_id.clone(),
@@ -445,10 +459,24 @@ pub async fn handle_password_import(
     }
 
     let credential_id = CredentialId::new();
-    let meta = metadata_json
+    let mut meta = metadata_json
         .map(|v| metadata_from_json(v).map_err(CommandError::ValidationError))
         .transpose()?
         .unwrap_or_default();
+
+    // Validate metadata against schema if present and enforced
+    if let Some(schema) = &keyspace.meta_schema
+        && schema.enforce
+    {
+        schema.validate(&mut meta).map_err(|errs| {
+            CommandError::ValidationError(
+                errs.iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        })?;
+    }
 
     let entry = PasswordEntry {
         credential_id: credential_id.clone(),
