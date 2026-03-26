@@ -13,7 +13,7 @@ A credential management server built in Rust. Manages JWT signing keys, API keys
 - **Access control:** token-based auth with per-policy keyspace and command restrictions
 - **Metadata schemas:** optional typed, validated metadata on all credential types (API keys, refresh tokens, passwords) with immutable field support
 - **Pub/sub:** real-time event notifications on keyspace channels
-- **Prometheus metrics** on port 9090 (`/metrics` scrape endpoint)
+- **Telemetry** via `shroudb-telemetry` — console (JSON stdout), audit file (`{data_dir}/audit.log`), and OpenTelemetry (OTLP)
 - **Webhook notifications** with HMAC-signed HTTP delivery and configurable retries
 - **Security hardened:** `mlock`-pinned secrets, zeroize-on-drop, core dumps disabled, constant-time comparisons
 
@@ -30,7 +30,7 @@ cargo run --bin shroudb-cli
 cargo run -- --config config.toml
 ```
 
-The server listens on `0.0.0.0:6399` (RESP3) and `0.0.0.0:9090` (Prometheus metrics) by default.
+The server listens on `0.0.0.0:6399` (RESP3) by default.
 
 ## Connection String
 
@@ -66,7 +66,7 @@ Environment variables can be interpolated with `${VAR_NAME}` syntax.
 ```toml
 [server]
 bind = "0.0.0.0:6399"
-metrics_bind = "0.0.0.0:9090"
+# otel_endpoint = "http://localhost:4317"  # OpenTelemetry OTLP endpoint
 # tls_cert = "/path/to/cert.pem"
 # tls_key = "/path/to/key.pem"
 # tls_client_ca = "/path/to/ca.pem"  # mTLS
@@ -152,7 +152,9 @@ Without a master key, the server starts in dev mode with an ephemeral key — da
 | `SUBSCRIBE <channel>` | Subscribe to events |
 | `PIPELINE ... END` | Batch commands |
 | `AUTH <token>` | Authenticate connection |
-| `CONFIG GET / SET <key> [<value>]` | Runtime config |
+| `CONFIG GET <key>` | Get a config value |
+| `CONFIG SET <key> <value>` | Set a config value (persists to WAL) |
+| `CONFIG LIST` | List all config keys and values |
 | `HEALTH [<ks>]` | Health check |
 
 See [PROTOCOL.md](PROTOCOL.md) for the full wire protocol specification.
@@ -211,7 +213,6 @@ Download prebuilt binaries from [GitHub Releases](https://github.com/shroudb/shr
 | Port | Purpose |
 |------|---------|
 | `6399` | RESP3 command protocol |
-| `9090` | Prometheus metrics (`/metrics`) |
 
 ### Volume
 
@@ -232,7 +233,7 @@ Without a master key the server starts in dev mode with an ephemeral key — dat
 Mount your config at any path and pass `--config`:
 
 ```sh
-docker run -p 6399:6399 -p 9090:9090 \
+docker run -p 6399:6399 \
   -e SHROUDB_MASTER_KEY="$(openssl rand -hex 32)" \
   -v shroudb-data:/data \
   -v ./config.toml:/config.toml:ro \
@@ -249,7 +250,6 @@ services:
     image: shroudb/shroudb
     ports:
       - "6399:6399"
-      - "9090:9090"
     environment:
       - SHROUDB_MASTER_KEY=${SHROUDB_MASTER_KEY}
       - LOG_LEVEL=info
@@ -274,7 +274,7 @@ A systemd unit file is provided in [`shroudb.service`](shroudb.service).
 
 - **Storage:** Write-ahead log (WAL) with periodic snapshots, AES-256-GCM encrypted at rest with per-keyspace derived keys (HKDF-SHA256)
 - **RESP3 protocol:** Battle-tested framing with ShrouDB's own command set — not Redis-compatible
-- **Observability:** Prometheus metrics endpoint with command counters, latency histograms, and key lifecycle gauges
+- **Observability:** `shroudb-telemetry` with console (JSON stdout), audit file (`{data_dir}/audit.log`), and OpenTelemetry (OTLP) export
 - **Workspace crates:** `shroudb-server`, `shroudb-protocol`, `shroudb-client`, `shroudb-cli`
 
 ## License
