@@ -78,6 +78,7 @@ pub enum Command {
         key: String,
         value: String,
     },
+    ConfigList,
     Subscribe {
         channel: String,
     },
@@ -167,6 +168,7 @@ impl Command {
             | Command::Keys { .. }
             | Command::Schema { .. }
             | Command::ConfigGet { .. }
+            | Command::ConfigList
             | Command::Auth { .. } => ReplicaBehavior::PureRead,
 
             // Observational reads -- side effects skipped on replicas
@@ -193,6 +195,7 @@ impl Command {
                 | Command::Keys { .. }
                 | Command::Schema { .. }
                 | Command::ConfigGet { .. }
+                | Command::ConfigList
                 | Command::Auth { .. }
         )
     }
@@ -373,6 +376,7 @@ impl Command {
             Command::ConfigSet { key, value } => {
                 vec!["CONFIG".into(), "SET".into(), key.clone(), value.clone()]
             }
+            Command::ConfigList => vec!["CONFIG".into(), "LIST".into()],
             Command::Subscribe { channel } => vec!["SUBSCRIBE".into(), channel.clone()],
             Command::PasswordSet {
                 keyspace,

@@ -302,8 +302,10 @@ impl CommandDispatcher {
             }
 
             Command::ConfigSet { key, value } => {
-                handlers::config::handle_config_set(&key, &value).await
+                handlers::config::handle_config_set(&self.engine, &key, &value).await
             }
+
+            Command::ConfigList => handlers::config::handle_config_list(&self.engine).await,
 
             Command::Subscribe { .. } => {
                 // SUBSCRIBE is handled at the connection level; reaching here means

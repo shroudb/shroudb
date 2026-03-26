@@ -104,6 +104,7 @@ pub fn command_verb(cmd: &Command) -> &'static str {
         Command::Schema { .. } => "SCHEMA",
         Command::ConfigGet { .. } => "CONFIG",
         Command::ConfigSet { .. } => "CONFIG",
+        Command::ConfigList => "CONFIG",
         Command::Subscribe { .. } => "SUBSCRIBE",
         Command::PasswordSet { .. } => "PASSWORD",
         Command::PasswordVerify { .. } => "PASSWORD",

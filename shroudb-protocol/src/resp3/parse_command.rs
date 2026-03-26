@@ -333,6 +333,7 @@ fn parse_config(args: &[String]) -> Result<Command, CommandError> {
             let value = require_arg(args, 2, "value")?.to_owned();
             Ok(Command::ConfigSet { key, value })
         }
+        "LIST" => Ok(Command::ConfigList),
         other => Err(CommandError::BadArg {
             message: format!("unknown CONFIG subcommand: {other}"),
         }),
