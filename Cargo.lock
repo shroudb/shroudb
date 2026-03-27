@@ -2082,7 +2082,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shroudb"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2111,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-cli"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2123,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-client"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "libc",
  "rustls",
@@ -2139,9 +2139,9 @@ dependencies = [
 
 [[package]]
 name = "shroudb-core"
-version = "0.2.0"
+version = "0.1.0"
 source = "sparse+https://crates.shroudb.dev/api/v1/crates/"
-checksum = "088bf97a87e6742648c2c94d0d2386db1c54faf3b201f85add91b21a15b65797"
+checksum = "fcaeee6fb17f3cda7fe31ef534e844f001f1b7a798bf4d4749ccc41b8b8ffbb8"
 dependencies = [
  "serde",
  "serde_json",
@@ -2152,9 +2152,9 @@ dependencies = [
 
 [[package]]
 name = "shroudb-crypto"
-version = "0.2.0"
+version = "0.1.0"
 source = "sparse+https://crates.shroudb.dev/api/v1/crates/"
-checksum = "4522760be972faef902cf28432f68fe9dd0e98e606d0c34c411d6d127ac59823"
+checksum = "250f11ac5349fba63c79f83428dbd67736731c4172970863b35b319b741c9bb5"
 dependencies = [
  "argon2",
  "base62",
@@ -2175,7 +2175,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-protocol"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2195,9 +2195,9 @@ dependencies = [
 
 [[package]]
 name = "shroudb-storage"
-version = "0.2.0"
+version = "0.1.0"
 source = "sparse+https://crates.shroudb.dev/api/v1/crates/"
-checksum = "924dbf5302461ec45d8ca1e5ff354d425da35cc1c7a1e70515e094e02535eb12"
+checksum = "609d15073e9cf540986daecf24ba4f3ffbfcd537aafdd9d7efeb304cdb59b632"
 dependencies = [
  "crc32fast",
  "dashmap",
@@ -3422,12 +3422,12 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
 name = "shroudb-core"
-version = "0.2.0"
+version = "0.1.0"
 
 [[patch.unused]]
 name = "shroudb-crypto"
-version = "0.2.0"
+version = "0.1.0"
 
 [[patch.unused]]
 name = "shroudb-storage"
-version = "0.2.0"
+version = "0.1.0"
