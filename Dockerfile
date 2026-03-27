@@ -8,9 +8,12 @@ WORKDIR /build
 COPY . .
 
 ARG TARGETARCH
-RUN --mount=type=secret,id=git_auth,env=GIT_AUTH_URL \
-    if [ -n "$GIT_AUTH_URL" ]; then git config --global url."$GIT_AUTH_URL".insteadOf "https://github.com/"; fi && \
+ARG REGISTRY_TOKEN
+RUN mkdir -p /root/.cargo && \
+    printf '[source.crates-io]\nreplace-with = "shroudb-cratesio"\n\n[source.shroudb-cratesio]\nregistry = "sparse+https://crates.shroudb.dev/api/v1/cratesio/"\n\n[registries.shroudb-cratesio]\nindex = "sparse+https://crates.shroudb.dev/api/v1/cratesio/"\ncredential-provider = ["cargo:token"]\n\n[registries.shroudb]\nindex = "sparse+https://crates.shroudb.dev/api/v1/crates/"\ncredential-provider = ["cargo:token"]\n' > /root/.cargo/config.toml && \
     RUST_TARGET=$(if [ "$TARGETARCH" = "arm64" ]; then echo "aarch64-unknown-linux-musl"; else echo "x86_64-unknown-linux-musl"; fi) && \
+    CARGO_REGISTRIES_SHROUDB_CRATESIO_TOKEN="$REGISTRY_TOKEN" \
+    CARGO_REGISTRIES_SHROUDB_TOKEN="$REGISTRY_TOKEN" \
     cargo build --release --target "$RUST_TARGET" \
     -p shroudb -p shroudb-cli && \
     mkdir -p /out && \
