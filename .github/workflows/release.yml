@@ -16,13 +16,13 @@ jobs:
       packages: write
     with:
       product: "shroudb"
-      server_package: "shroudb-server"
+      server_package: "shroudb"
       server_binary: "shroudb"
       cli_package: "shroudb-cli"
       cli_binary: "shroudb-cli"
       docker_server_target: "shroudb"
       docker_cli_target: "shroudb-cli"
-      crates: "shroudb-protocol,shroudb-client,shroudb-server,shroudb-cli"
+      crates: "shroudb-protocol,shroudb-client,shroudb,shroudb-cli"
     secrets:
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
       GH_PAT: ${{ secrets.GH_PAT }}
