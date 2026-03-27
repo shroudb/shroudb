@@ -46,6 +46,7 @@ pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
         "CONFIG" => parse_config(args),
         "SUBSCRIBE" => parse_subscribe(args),
         "PASSWORD" => parse_password(args),
+        "KEYSPACE_CREATE" => parse_keyspace_create(args),
         "AUTH" => parse_auth(args),
         "PIPELINE" => parse_pipeline(&strings),
         _ => Err(CommandError::BadArg {
@@ -423,6 +424,53 @@ fn parse_password(args: &[String]) -> Result<Command, CommandError> {
     }
 }
 
+// KEYSPACE_CREATE <name> TYPE <type> [ALGORITHM <alg>] [ROTATION_DAYS <n>] [DRAIN_DAYS <n>] [TTL <n>]
+fn parse_keyspace_create(args: &[String]) -> Result<Command, CommandError> {
+    let name = require_arg(args, 0, "name")?.to_owned();
+    let rest = &args[1..];
+
+    let keyspace_type = find_opt(rest, "TYPE")
+        .ok_or_else(|| CommandError::BadArg {
+            message: "KEYSPACE_CREATE requires TYPE".into(),
+        })?
+        .to_owned();
+
+    let algorithm = find_opt(rest, "ALGORITHM").map(|s| s.to_owned());
+
+    let rotation_days = find_opt(rest, "ROTATION_DAYS")
+        .map(|s| {
+            s.parse::<u32>().map_err(|e| CommandError::BadArg {
+                message: format!("invalid ROTATION_DAYS: {e}"),
+            })
+        })
+        .transpose()?;
+
+    let drain_days = find_opt(rest, "DRAIN_DAYS")
+        .map(|s| {
+            s.parse::<u32>().map_err(|e| CommandError::BadArg {
+                message: format!("invalid DRAIN_DAYS: {e}"),
+            })
+        })
+        .transpose()?;
+
+    let default_ttl_secs = find_opt(rest, "TTL")
+        .map(|s| {
+            s.parse::<u64>().map_err(|e| CommandError::BadArg {
+                message: format!("invalid TTL: {e}"),
+            })
+        })
+        .transpose()?;
+
+    Ok(Command::KeyspaceCreate {
+        name,
+        keyspace_type,
+        algorithm,
+        rotation_days,
+        drain_days,
+        default_ttl_secs,
+    })
+}
+
 // AUTH <token>
 fn parse_auth(args: &[String]) -> Result<Command, CommandError> {
     let token = require_arg(args, 0, "token")?.to_owned();
@@ -471,6 +519,7 @@ fn parse_pipeline(all_strings: &[String]) -> Result<Command, CommandError> {
         "CONFIG",
         "PASSWORD",
         "SUBSCRIBE",
+        "KEYSPACE_CREATE",
         "AUTH",
     ];
 

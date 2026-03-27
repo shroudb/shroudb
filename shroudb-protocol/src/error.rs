@@ -47,6 +47,9 @@ pub enum CommandError {
     #[error("LOCKED account temporarily locked, retry_after={retry_after_secs}")]
     Locked { retry_after_secs: u64 },
 
+    #[error("EXISTS {entity}: {name}")]
+    AlreadyExists { entity: String, name: String },
+
     #[error("INTERNAL {0}")]
     Internal(String),
 }

@@ -1,36 +1,49 @@
-# ShrouDB
+# ShrouDB Documentation
 
-A credential management server built in Rust. Manages JWT signing keys, API keys, HMAC secrets, refresh tokens, and passwords with encrypted-at-rest storage, automatic key rotation, and a TCP wire protocol.
+## Installation
 
-## Features
+### Homebrew
 
-- **Five keyspace types:** JWT, API key, HMAC, refresh token, and password
-- **JWT algorithms:** ES256, ES384, RS256, RS384, RS512, EdDSA with automatic key rotation
-- **Password hashing:** Argon2id, bcrypt, scrypt with lockout and transparent rehash
-- **Encrypted storage:** AES-256-GCM at rest, per-keyspace derived keys (HKDF-SHA256), WAL + snapshots
-- **Wire protocol** on port 6399 with pipelining support
-- **TLS and mTLS** on the wire protocol, with Unix socket support
-- **Access control:** token-based auth with per-policy keyspace and command restrictions
-- **Metadata schemas:** optional typed, validated metadata on all credential types (API keys, refresh tokens, passwords) with immutable field support
-- **Pub/sub:** real-time event notifications on keyspace channels
-- **Telemetry** via `shroudb-telemetry` — console (JSON stdout), audit file (`{data_dir}/audit.log`), and OpenTelemetry (OTLP)
-- **Webhook notifications** with HMAC-signed HTTP delivery and configurable retries
-- **Security hardened:** `mlock`-pinned secrets, zeroize-on-drop, core dumps disabled, constant-time comparisons
+```sh
+brew install shroudb/tap/shroudb
+```
+
+Installs `shroudb` (server) and `shroudb-cli`.
+
+### Docker
+
+```sh
+docker pull shroudb/shroudb
+```
+
+A CLI image is also available:
+
+```sh
+docker pull shroudb/cli
+```
+
+### Binary
+
+Download prebuilt binaries from [GitHub Releases](https://github.com/shroudb/shroudb/releases). Available for Linux (x86_64, aarch64) and macOS (x86_64, Apple Silicon).
+
+---
 
 ## Quick Start
 
 ```sh
-# Build and run (dev mode — ephemeral master key, human-readable logs)
-cargo run
-
-# Connect with the CLI
-cargo run --bin shroudb-cli
+# Start the server (dev mode — ephemeral master key, human-readable logs)
+shroudb
 
 # Or with a config file
-cargo run -- --config config.toml
+shroudb --config config.toml
+
+# Connect with the CLI
+shroudb-cli
 ```
 
 The server listens on `0.0.0.0:6399` by default.
+
+---
 
 ## Connection String
 
@@ -52,13 +65,15 @@ shroudb+tls://tok@host:6399/sessions      # TLS + auth + default keyspace
 shroudb-cli --uri shroudb://localhost:6399
 ```
 
+---
+
 ## Configuration
 
 Copy and edit the example config:
 
 ```sh
 cp config.example.toml config.toml
-./target/release/shroudb --config config.toml
+shroudb --config config.toml
 ```
 
 Environment variables can be interpolated with `${VAR_NAME}` syntax.
@@ -104,6 +119,8 @@ lockout_duration = "15m"
 # commands = ["*"]
 ```
 
+See [`config.example.toml`](config.example.toml) for all options.
+
 ### Master Key
 
 ```sh
@@ -119,15 +136,17 @@ export SHROUDB_MASTER_KEY_FILE="/etc/shroudb/master.key"
 
 Without a master key, the server starts in dev mode with an ephemeral key — data will not survive restarts.
 
-## Keyspace Types
+### Keyspace Types
 
 | Type | Description |
 |------|-------------|
 | `jwt` | Asymmetric signing keys with automatic rotation and JWKS endpoint |
-| `api_key` | Bearer tokens with SHA-256 hashed storage and optional prefix |
+| `api_key` | Bearer tokens with hashed storage and optional prefix |
 | `hmac` | Symmetric HMAC keys (SHA-256/384/512) with rotation |
 | `refresh_token` | Rotating refresh tokens with family-based revocation and chain tracking |
 | `password` | Argon2id/bcrypt/scrypt password hashing with lockout and transparent rehash |
+
+---
 
 ## Commands
 
@@ -153,11 +172,13 @@ Without a master key, the server starts in dev mode with an ephemeral key — da
 | `PIPELINE ... END` | Batch commands |
 | `AUTH <token>` | Authenticate connection |
 | `CONFIG GET <key>` | Get a config value |
-| `CONFIG SET <key> <value>` | Set a config value (persists to WAL) |
+| `CONFIG SET <key> <value>` | Set a config value |
 | `CONFIG LIST` | List all config keys and values |
 | `HEALTH [<ks>]` | Health check |
 
-See [PROTOCOL.md](PROTOCOL.md) for the full wire protocol specification.
+See [PROTOCOL.md](PROTOCOL.md) for the full protocol specification.
+
+---
 
 ## Operational Commands
 
@@ -178,45 +199,19 @@ shroudb import --file backup.kvex --keyspace my-keyspace --config config.toml
 shroudb purge my-keyspace --config config.toml
 ```
 
-## Installation
-
-### Homebrew
-
-```sh
-brew install shroudb/tap/shroudb
-```
-
-Installs `shroudb` (server) and `shroudb-cli`.
-
-### Docker
-
-```sh
-docker pull shroudb/shroudb
-```
-
-A CLI image is also available:
-
-```sh
-docker pull shroudb/cli
-```
-
-### Binary
-
-Download prebuilt binaries from [GitHub Releases](https://github.com/shroudb/shroudb/releases). Available for Linux (x86_64, aarch64) and macOS (x86_64, Apple Silicon).
-
 ---
 
-## Docker
+## Docker Deployment
 
 ### Ports
 
 | Port | Purpose |
 |------|---------|
-| `6399` | TCP wire protocol |
+| `6399` | ShrouDB protocol |
 
 ### Volume
 
-Mount a volume at `/data` for durable storage (WAL segments + snapshots). Without a volume, data is lost when the container stops.
+Mount a volume at `/data` for durable storage. Without a volume, data is lost when the container stops.
 
 ### Environment
 
@@ -239,8 +234,6 @@ docker run -p 6399:6399 \
   -v ./config.toml:/config.toml:ro \
   shroudb/shroudb --config /config.toml
 ```
-
-See [`config.example.toml`](config.example.toml) for all options.
 
 ### Docker Compose
 
@@ -268,15 +261,14 @@ export SHROUDB_MASTER_KEY="$(openssl rand -hex 32)"
 docker compose up -d
 ```
 
-A systemd unit file is provided in [`shroudb.service`](shroudb.service).
+---
 
-## Architecture
+## Telemetry
 
-- **Storage:** Write-ahead log (WAL) with periodic snapshots, AES-256-GCM encrypted at rest with per-keyspace derived keys (HKDF-SHA256)
-- **Wire protocol:** Battle-tested framing with ShrouDB's own command set
-- **Observability:** `shroudb-telemetry` with console (JSON stdout), audit file (`{data_dir}/audit.log`), and OpenTelemetry (OTLP) export
-- **Workspace crates:** `shroudb-server`, `shroudb-protocol`, `shroudb-client`, `shroudb-cli`
+ShrouDB provides three telemetry channels:
 
-## License
+- **Console** — Structured JSON logs to stdout. Configurable log level via `LOG_LEVEL` environment variable.
+- **Audit log** — All credential operations are written to `{data_dir}/audit.log` for compliance and forensic review.
+- **OpenTelemetry** — OTLP export of traces and metrics to any OpenTelemetry-compatible backend. Configure with `otel_endpoint` in the server config.
 
-MIT OR Apache-2.0
+All telemetry is handled by the shared `shroudb-telemetry` library across all ShrouDB engines.

@@ -115,6 +115,16 @@ pub enum Command {
         metadata: Option<serde_json::Value>,
     },
 
+    // === Keyspace management ===
+    KeyspaceCreate {
+        name: String,
+        keyspace_type: String,
+        algorithm: Option<String>,
+        rotation_days: Option<u32>,
+        drain_days: Option<u32>,
+        default_ttl_secs: Option<u64>,
+    },
+
     // === Auth ===
     Auth {
         token: String,
@@ -222,6 +232,7 @@ impl Command {
             | Command::PasswordReset { keyspace, .. }
             | Command::PasswordImport { keyspace, .. } => Some(keyspace),
             Command::Health { keyspace, .. } => keyspace.as_deref(),
+            Command::KeyspaceCreate { .. } => None,
             _ => None,
         }
     }
@@ -452,6 +463,34 @@ impl Command {
                 ];
                 if let Some(m) = metadata {
                     args.extend(["META".into(), m.to_string()]);
+                }
+                args
+            }
+            Command::KeyspaceCreate {
+                name,
+                keyspace_type,
+                algorithm,
+                rotation_days,
+                drain_days,
+                default_ttl_secs,
+            } => {
+                let mut args = vec![
+                    "KEYSPACE_CREATE".into(),
+                    name.clone(),
+                    "TYPE".into(),
+                    keyspace_type.clone(),
+                ];
+                if let Some(a) = algorithm {
+                    args.extend(["ALGORITHM".into(), a.clone()]);
+                }
+                if let Some(r) = rotation_days {
+                    args.extend(["ROTATION_DAYS".into(), r.to_string()]);
+                }
+                if let Some(d) = drain_days {
+                    args.extend(["DRAIN_DAYS".into(), d.to_string()]);
+                }
+                if let Some(t) = default_ttl_secs {
+                    args.extend(["TTL".into(), t.to_string()]);
                 }
                 args
             }

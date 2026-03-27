@@ -307,6 +307,26 @@ impl CommandDispatcher {
 
             Command::ConfigList => handlers::config::handle_config_list(&self.engine).await,
 
+            Command::KeyspaceCreate {
+                name,
+                keyspace_type,
+                algorithm,
+                rotation_days,
+                drain_days,
+                default_ttl_secs,
+            } => {
+                handlers::keyspace_create::handle_keyspace_create(
+                    &self.engine,
+                    &name,
+                    &keyspace_type,
+                    algorithm.as_deref(),
+                    rotation_days,
+                    drain_days,
+                    default_ttl_secs,
+                )
+                .await
+            }
+
             Command::Subscribe { .. } => {
                 // SUBSCRIBE is handled at the connection level; reaching here means
                 // it was dispatched in a context that doesn't support streaming.
