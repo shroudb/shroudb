@@ -10,7 +10,7 @@ name = "shroudb-cli"
 path = "src/main.rs"
 
 [dependencies]
-shroudb-client = { path = "../shroudb-client" }
+shroudb-client.workspace = true
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
