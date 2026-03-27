@@ -1,10 +1,10 @@
 pub mod config;
 pub mod health;
-pub mod keyspace_create;
 pub mod inspect;
 pub mod issue;
 pub mod jwks;
 pub mod keys;
+pub mod keyspace_create;
 pub mod keystate;
 pub mod password;
 pub mod refresh;

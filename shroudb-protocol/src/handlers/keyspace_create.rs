@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use shroudb_core::{
-    HashParams, Keyspace, KeyspacePolicy, KeyspaceType, Namespace, PasswordAlgorithm,
-    UnixTimestamp,
+    HashParams, Keyspace, KeyspacePolicy, KeyspaceType, Namespace, PasswordAlgorithm, UnixTimestamp,
 };
 use shroudb_crypto::{HmacAlgorithm, JwtAlgorithm};
 use shroudb_storage::{
@@ -178,7 +177,9 @@ fn parse_jwt_algorithm(s: &str) -> Result<JwtAlgorithm, CommandError> {
         "RS512" => Ok(JwtAlgorithm::RS512),
         "EdDSA" => Ok(JwtAlgorithm::EdDSA),
         other => Err(CommandError::BadArg {
-            message: format!("unknown JWT algorithm: {other}. Valid: ES256, ES384, RS256, RS384, RS512, EdDSA"),
+            message: format!(
+                "unknown JWT algorithm: {other}. Valid: ES256, ES384, RS256, RS384, RS512, EdDSA"
+            ),
         }),
     }
 }
@@ -200,7 +201,9 @@ fn parse_password_algorithm(s: &str) -> Result<PasswordAlgorithm, CommandError> 
         "bcrypt" => Ok(PasswordAlgorithm::Bcrypt),
         "scrypt" => Ok(PasswordAlgorithm::Scrypt),
         other => Err(CommandError::BadArg {
-            message: format!("unknown password algorithm: {other}. Valid: argon2id, bcrypt, scrypt"),
+            message: format!(
+                "unknown password algorithm: {other}. Valid: argon2id, bcrypt, scrypt"
+            ),
         }),
     }
 }
