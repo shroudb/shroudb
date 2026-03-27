@@ -57,7 +57,7 @@ impl CommandDispatcher {
         }
 
         // Auth and Health bypass auth checks
-        if !matches!(cmd, Command::Auth { .. } | Command::Health { .. })
+        if !matches!(cmd, Command::Auth { .. } | Command::Health { .. } | Command::Ping | Command::CommandList)
             && self.auth_registry.is_required()
         {
             match auth {
@@ -75,7 +75,7 @@ impl CommandDispatcher {
         }
 
         // Check engine health (allow Health commands through)
-        if !matches!(cmd, Command::Health { .. }) && self.engine.health() != HealthState::Ready {
+        if !matches!(cmd, Command::Health { .. } | Command::Ping | Command::CommandList) && self.engine.health() != HealthState::Ready {
             return CommandResponse::Error(CommandError::NotReady(
                 self.engine.health().to_string(),
             ));
@@ -415,6 +415,24 @@ impl CommandDispatcher {
                     "message",
                     ResponseValue::String("use AUTH at connection level".into()),
                 ))
+            }
+
+            Command::Ping => Ok(ResponseMap::ok().with("message", ResponseValue::String("PONG".into()))),
+
+            Command::CommandList => {
+                let commands = vec![
+                    "ISSUE", "VERIFY", "REVOKE", "REFRESH", "UPDATE", "INSPECT",
+                    "ROTATE", "JWKS", "KEYSTATE", "HEALTH", "KEYS", "SUSPEND",
+                    "UNSUSPEND", "SCHEMA", "CONFIG", "SUBSCRIBE", "PASSWORD",
+                    "KEYSPACE_CREATE", "AUTH", "PING", "COMMAND",
+                ];
+                let values: Vec<ResponseValue> = commands
+                    .into_iter()
+                    .map(|c| ResponseValue::String(c.into()))
+                    .collect();
+                Ok(ResponseMap::ok()
+                    .with("count", ResponseValue::Integer(values.len() as i64))
+                    .with("commands", ResponseValue::Array(values)))
             }
 
             Command::Pipeline(_) => unreachable!("pipeline handled above"),

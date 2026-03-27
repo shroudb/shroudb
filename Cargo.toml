@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
@@ -17,8 +17,8 @@ publish = ["shroudb"]
 
 [workspace.dependencies]
 # Internal crates
-shroudb-protocol = { path = "shroudb-protocol", version = "0.1.0", registry = "shroudb" }
-shroudb-client = { path = "shroudb-client", version = "0.1.0", registry = "shroudb" }
+shroudb-protocol = { path = "shroudb-protocol", version = "0.1.1", registry = "shroudb" }
+shroudb-client = { path = "shroudb-client", version = "0.1.1", registry = "shroudb" }
 
 # Commons crates (shroudb registry)
 shroudb-core = { version = "0.1.0", registry = "shroudb" }

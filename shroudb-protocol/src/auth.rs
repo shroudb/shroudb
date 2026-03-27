@@ -113,6 +113,8 @@ pub fn command_verb(cmd: &Command) -> &'static str {
         Command::PasswordImport { .. } => "PASSWORD",
         Command::KeyspaceCreate { .. } => "KEYSPACE_CREATE",
         Command::Auth { .. } => "AUTH",
+        Command::Ping => "PING",
+        Command::CommandList => "COMMAND",
         Command::Pipeline(_) => "PIPELINE",
     }
 }

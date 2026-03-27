@@ -48,6 +48,8 @@ pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
         "PASSWORD" => parse_password(args),
         "KEYSPACE_CREATE" => parse_keyspace_create(args),
         "AUTH" => parse_auth(args),
+        "PING" => Ok(Command::Ping),
+        "COMMAND" => parse_command_sub(args),
         "PIPELINE" => parse_pipeline(&strings),
         _ => Err(CommandError::BadArg {
             message: format!("unknown command: {verb}"),
@@ -471,6 +473,22 @@ fn parse_keyspace_create(args: &[String]) -> Result<Command, CommandError> {
     })
 }
 
+// COMMAND LIST
+fn parse_command_sub(args: &[String]) -> Result<Command, CommandError> {
+    if args.is_empty() {
+        return Err(CommandError::BadArg {
+            message: "COMMAND requires a subcommand (LIST)".into(),
+        });
+    }
+    let sub = args[0].to_ascii_uppercase();
+    match sub.as_str() {
+        "LIST" => Ok(Command::CommandList),
+        other => Err(CommandError::BadArg {
+            message: format!("unknown COMMAND subcommand: {other}"),
+        }),
+    }
+}
+
 // AUTH <token>
 fn parse_auth(args: &[String]) -> Result<Command, CommandError> {
     let token = require_arg(args, 0, "token")?.to_owned();
@@ -521,6 +539,8 @@ fn parse_pipeline(all_strings: &[String]) -> Result<Command, CommandError> {
         "SUBSCRIBE",
         "KEYSPACE_CREATE",
         "AUTH",
+        "PING",
+        "COMMAND",
     ];
 
     let mut commands = Vec::new();

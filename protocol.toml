@@ -1339,3 +1339,33 @@ condition = "Unrecognized hash format"
 [[commands.password_import.errors]]
 code = "DISABLED"
 condition = "Keyspace is disabled"
+
+# ─── Introspection ─────────────────────────────────────────────────────────────
+
+[commands.ping]
+verb = "PING"
+description = "Simple connectivity check — returns PONG without auth or health checks"
+replica_behavior = "PureRead"
+params = []
+
+[[commands.ping.response]]
+name = "message"
+type = "string"
+description = "Always PONG"
+
+[commands.command_list]
+verb = "COMMAND"
+variant = "LIST"
+description = "List all supported commands for this engine"
+replica_behavior = "PureRead"
+params = []
+
+[[commands.command_list.response]]
+name = "count"
+type = "integer"
+description = "Number of supported commands"
+
+[[commands.command_list.response]]
+name = "commands"
+type = "array"
+description = "List of command verb strings"

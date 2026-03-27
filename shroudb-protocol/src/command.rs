@@ -130,6 +130,12 @@ pub enum Command {
         token: String,
     },
 
+    // === Introspection ===
+    /// Simple connectivity check — returns PONG.
+    Ping,
+    /// List all supported commands.
+    CommandList,
+
     // === Pipeline ===
     Pipeline(Vec<Command>),
 }
@@ -179,7 +185,9 @@ impl Command {
             | Command::Schema { .. }
             | Command::ConfigGet { .. }
             | Command::ConfigList
-            | Command::Auth { .. } => ReplicaBehavior::PureRead,
+            | Command::Auth { .. }
+            | Command::Ping
+            | Command::CommandList => ReplicaBehavior::PureRead,
 
             // Observational reads -- side effects skipped on replicas
             Command::Verify { .. } => ReplicaBehavior::ObservationalRead,
@@ -207,6 +215,8 @@ impl Command {
                 | Command::ConfigGet { .. }
                 | Command::ConfigList
                 | Command::Auth { .. }
+                | Command::Ping
+                | Command::CommandList
         )
     }
 
@@ -232,7 +242,9 @@ impl Command {
             | Command::PasswordReset { keyspace, .. }
             | Command::PasswordImport { keyspace, .. } => Some(keyspace),
             Command::Health { keyspace, .. } => keyspace.as_deref(),
-            Command::KeyspaceCreate { .. } => None,
+            Command::KeyspaceCreate { .. }
+            | Command::Ping
+            | Command::CommandList => None,
             _ => None,
         }
     }
@@ -495,6 +507,8 @@ impl Command {
                 args
             }
             Command::Auth { token } => vec!["AUTH".into(), token.clone()],
+            Command::Ping => vec!["PING".into()],
+            Command::CommandList => vec!["COMMAND".into(), "LIST".into()],
             Command::Pipeline(commands) => {
                 let mut args = vec!["PIPELINE".into()];
                 for cmd in commands {
