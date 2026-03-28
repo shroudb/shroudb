@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== pre-commit: running checks ==="
+
+# Verify no local path patches are active
+if grep -q '^\[patch\.' .cargo/config.toml 2>/dev/null | grep -v '^#'; then
+    echo "ERROR: .cargo/config.toml has active [patch] sections"
+    echo "Disable patches before committing to avoid lockfile checksum mismatches"
+    exit 1
+fi
+
+# fmt
+echo "  fmt..."
+cargo fmt --all -- --check
+if [ $? -ne 0 ]; then
+    echo "ERROR: cargo fmt failed"
+    exit 1
+fi
+
+# clippy
+echo "  clippy..."
+cargo clippy --workspace --all-targets -- -D warnings
+if [ $? -ne 0 ]; then
+    echo "ERROR: cargo clippy failed"
+    exit 1
+fi
+
+# tests (protocol + client unit tests — fast)
+echo "  tests..."
+cargo test -p shroudb-protocol -p shroudb-client --lib
+if [ $? -ne 0 ]; then
+    echo "ERROR: cargo test failed"
+    exit 1
+fi
+
+echo "=== pre-commit: all checks passed ==="
