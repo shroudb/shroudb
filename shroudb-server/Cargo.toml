@@ -42,3 +42,7 @@ reqwest.workspace = true
 tempfile = "3"
 tokio = { workspace = true, features = ["full"] }
 shroudb-client.workspace = true
+ring.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+tokio-rustls.workspace = true

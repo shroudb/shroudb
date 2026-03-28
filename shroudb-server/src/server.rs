@@ -161,6 +161,8 @@ fn build_tls_acceptor(config: &ServerConfig) -> anyhow::Result<Option<TlsAccepto
     let key = rustls_pki_types::PrivateKeyDer::from_pem_slice(&key_pem)
         .context("parsing TLS private key")?;
 
+    let provider = rustls::crypto::ring::default_provider();
+
     let tls_config = if let Some(ref ca_path) = config.tls_client_ca {
         let ca_pem = std::fs::read(ca_path)
             .with_context(|| format!("reading client CA cert: {}", ca_path.display()))?;
@@ -178,12 +180,16 @@ fn build_tls_acceptor(config: &ServerConfig) -> anyhow::Result<Option<TlsAccepto
             .build()
             .context("building mTLS client verifier")?;
         tracing::info!("mTLS enabled (client certificate required)");
-        rustls::ServerConfig::builder()
+        rustls::ServerConfig::builder_with_provider(Arc::new(provider))
+            .with_safe_default_protocol_versions()
+            .context("setting TLS protocol versions")?
             .with_client_cert_verifier(verifier)
             .with_single_cert(certs, key)
             .context("building TLS server config with mTLS")?
     } else {
-        rustls::ServerConfig::builder()
+        rustls::ServerConfig::builder_with_provider(Arc::new(provider))
+            .with_safe_default_protocol_versions()
+            .context("setting TLS protocol versions")?
             .with_no_client_auth()
             .with_single_cert(certs, key)
             .context("building TLS server config")?

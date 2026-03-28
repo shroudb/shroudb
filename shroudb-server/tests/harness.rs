@@ -11,7 +11,8 @@ use std::time::Duration;
 use shroudb_client::ShrouDBClient;
 
 /// Master key used by all tests (32 zero bytes, hex-encoded).
-const TEST_MASTER_KEY: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+pub const TEST_MASTER_KEY: &str =
+    "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Find a free TCP port by binding to :0.
 fn free_port() -> u16 {
@@ -35,6 +36,9 @@ pub struct TestServerConfig {
     pub auth_tokens: Vec<TestToken>,
     pub rate_limit: Option<u32>,
     pub webhooks: Vec<TestWebhook>,
+    pub tls_cert: Option<PathBuf>,
+    pub tls_key: Option<PathBuf>,
+    pub master_key: Option<String>,
 }
 
 pub struct TestToken {
@@ -63,6 +67,7 @@ pub struct TestServer {
     pub addr: String,
     pub data_dir: tempfile::TempDir,
     config_dir: tempfile::TempDir,
+    pub master_key: String,
 }
 
 impl TestServer {
@@ -78,6 +83,10 @@ impl TestServer {
         let addr = format!("127.0.0.1:{port}");
         let data_dir = tempfile::tempdir().ok()?;
         let config_dir = tempfile::tempdir().ok()?;
+        let master_key = config
+            .master_key
+            .clone()
+            .unwrap_or_else(|| TEST_MASTER_KEY.to_string());
 
         // Generate config TOML
         let config_path = config_dir.path().join("config.toml");
@@ -91,7 +100,7 @@ impl TestServer {
             .arg(data_dir.path())
             .arg("--log-level")
             .arg("warn")
-            .env("SHROUDB_MASTER_KEY", TEST_MASTER_KEY)
+            .env("SHROUDB_MASTER_KEY", &master_key)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -102,10 +111,17 @@ impl TestServer {
             addr: addr.clone(),
             data_dir,
             config_dir,
+            master_key,
         };
 
-        // Wait for server to be ready (poll with PING)
-        if !server.wait_ready(Duration::from_secs(10)).await {
+        // Wait for server to be ready (poll with PING, or TCP for TLS servers)
+        let is_tls = config.tls_cert.is_some();
+        let ready = if is_tls {
+            server.wait_ready_tls(Duration::from_secs(10)).await
+        } else {
+            server.wait_ready(Duration::from_secs(10)).await
+        };
+        if !ready {
             eprintln!("server failed to start on port {port}");
             return None;
         }
@@ -142,9 +158,13 @@ impl TestServer {
         let _ = self.child.wait();
     }
 
-
     /// Wait for the server to respond to PING.
     async fn wait_ready(&mut self, timeout: Duration) -> bool {
+        self.wait_ready_tcp(timeout).await
+    }
+
+    /// Wait for the server to accept a TCP connection and respond to PING.
+    async fn wait_ready_tcp(&mut self, timeout: Duration) -> bool {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             if tokio::time::Instant::now() > deadline {
@@ -164,6 +184,27 @@ impl TestServer {
             }
         }
     }
+
+    /// Wait for a TLS server to be ready by checking if TCP connect succeeds
+    /// (the server is listening). We cannot do a plain PING since TLS is required.
+    async fn wait_ready_tls(&mut self, timeout: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if tokio::time::Instant::now() > deadline {
+                return false;
+            }
+            // Just check if TCP connect succeeds (server is listening)
+            if tokio::net::TcpStream::connect(&self.addr).await.is_ok() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            if let Some(status) = self.child.try_wait().ok().flatten() {
+                eprintln!("server exited with status: {status}");
+                return false;
+            }
+        }
+    }
 }
 
 impl Drop for TestServer {
@@ -173,12 +214,66 @@ impl Drop for TestServer {
     }
 }
 
+/// Start a new server on an existing data directory.
+/// Takes ownership of a pre-existing `TempDir` so it is not cleaned up.
+pub async fn start_on_data_dir(
+    data_dir: tempfile::TempDir,
+    master_key: &str,
+) -> Option<TestServer> {
+    let binary = find_binary()?;
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let config_dir = tempfile::tempdir().ok()?;
+
+    let config_path = config_dir.path().join("config.toml");
+    let toml = generate_config(&addr, &TestServerConfig::default());
+    std::fs::write(&config_path, toml).ok()?;
+
+    let child = Command::new(&binary)
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--data-dir")
+        .arg(data_dir.path())
+        .arg("--log-level")
+        .arg("warn")
+        .env("SHROUDB_MASTER_KEY", master_key)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let mut server = TestServer {
+        child,
+        addr: addr.clone(),
+        data_dir,
+        config_dir,
+        master_key: master_key.to_string(),
+    };
+
+    if !server.wait_ready(Duration::from_secs(10)).await {
+        eprintln!("server failed to start on port {port}");
+        return None;
+    }
+
+    Some(server)
+}
+
 /// Run an offline subcommand (export, import, rekey, doctor) against a data dir.
 /// Server must be stopped before calling this.
 pub fn run_offline_subcommand(
     data_dir: &Path,
     config_path: &Path,
     args: &[&str],
+) -> std::process::Output {
+    run_offline_subcommand_with_key(data_dir, config_path, args, TEST_MASTER_KEY)
+}
+
+/// Run an offline subcommand with a custom master key.
+pub fn run_offline_subcommand_with_key(
+    data_dir: &Path,
+    config_path: &Path,
+    args: &[&str],
+    master_key: &str,
 ) -> std::process::Output {
     let binary = find_binary().expect("shroudb binary not found");
     Command::new(&binary)
@@ -187,7 +282,7 @@ pub fn run_offline_subcommand(
         .arg("--config")
         .arg(config_path)
         .args(args)
-        .env("SHROUDB_MASTER_KEY", TEST_MASTER_KEY)
+        .env("SHROUDB_MASTER_KEY", master_key)
         .output()
         .expect("failed to run subcommand")
 }
@@ -198,6 +293,13 @@ fn generate_config(bind: &str, config: &TestServerConfig) -> String {
 bind = "{bind}"
 "#
     );
+
+    if let Some(ref cert_path) = config.tls_cert {
+        toml.push_str(&format!("tls_cert = \"{}\"\n", cert_path.display()));
+    }
+    if let Some(ref key_path) = config.tls_key {
+        toml.push_str(&format!("tls_key = \"{}\"\n", key_path.display()));
+    }
 
     if let Some(limit) = config.rate_limit {
         toml.push_str(&format!("rate_limit_per_second = {limit}\n"));

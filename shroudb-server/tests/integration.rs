@@ -1,6 +1,10 @@
 mod harness;
 
 use harness::*;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -339,7 +343,10 @@ async fn rate_limiting_rejects_excess() {
     // Send more commands than the rate limit allows
     let mut rejected = 0;
     for i in 0..20 {
-        if c.put("test", format!("k{i}").as_bytes(), b"v").await.is_err() {
+        if c.put("test", format!("k{i}").as_bytes(), b"v")
+            .await
+            .is_err()
+        {
             rejected += 1;
         }
     }
@@ -482,4 +489,526 @@ async fn command_list_returns_commands() {
     assert!(commands.contains(&"PUT".to_string()));
     assert!(commands.contains(&"GET".to_string()));
     assert!(commands.contains(&"SUBSCRIBE".to_string()));
+}
+
+// =====================================================================
+// TLS
+// =====================================================================
+
+/// Generate a self-signed certificate and key using openssl CLI.
+/// Returns (cert_path, key_path) inside the given directory.
+fn generate_self_signed_cert(dir: &std::path::Path) -> (PathBuf, PathBuf) {
+    let cert_path = dir.join("server.crt");
+    let key_path = dir.join("server.key");
+    let ext_path = dir.join("ext.cnf");
+
+    // Write extension config that marks this as an end-entity certificate
+    // (not a CA) with a SAN for localhost.
+    std::fs::write(
+        &ext_path,
+        "basicConstraints=CA:FALSE\nsubjectAltName=DNS:localhost\n",
+    )
+    .expect("writing ext.cnf");
+
+    let status = Command::new("openssl")
+        .args([
+            "req",
+            "-x509",
+            "-newkey",
+            "ec",
+            "-pkeyopt",
+            "ec_paramgen_curve:prime256v1",
+            "-keyout",
+        ])
+        .arg(&key_path)
+        .arg("-out")
+        .arg(&cert_path)
+        .arg("-extensions")
+        .arg("v3_req")
+        .args(["-days", "1", "-nodes", "-subj", "/CN=localhost"])
+        .arg("-addext")
+        .arg("basicConstraints=CA:FALSE")
+        .arg("-addext")
+        .arg("subjectAltName=DNS:localhost")
+        .output()
+        .expect("openssl must be installed to run TLS tests");
+
+    assert!(
+        status.status.success(),
+        "openssl failed: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+
+    (cert_path, key_path)
+}
+
+#[tokio::test]
+async fn tls_server_accepts_tls_client() {
+    let cert_dir = tempfile::tempdir().expect("tempdir");
+    let (cert_path, key_path) = generate_self_signed_cert(cert_dir.path());
+
+    let config = TestServerConfig {
+        tls_cert: Some(cert_path.clone()),
+        tls_key: Some(key_path),
+        ..Default::default()
+    };
+
+    let server = TestServer::start_with_config(config)
+        .await
+        .expect("TLS server failed to start");
+
+    // Build a custom TLS client that trusts our self-signed cert.
+    let cert_pem = std::fs::read(&cert_path).unwrap();
+    let mut root_store = rustls::RootCertStore::empty();
+    use rustls_pki_types::pem::PemObject;
+    let certs: Vec<rustls_pki_types::CertificateDer<'static>> =
+        rustls_pki_types::CertificateDer::pem_slice_iter(&cert_pem)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+    for cert in certs {
+        root_store.add(cert).unwrap();
+    }
+
+    let provider = rustls::crypto::ring::default_provider();
+    let tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(tls_config));
+
+    let tcp_stream = tokio::net::TcpStream::connect(&server.addr).await.unwrap();
+    let domain = rustls_pki_types::ServerName::try_from("localhost".to_string()).unwrap();
+    let tls_stream = connector.connect(domain, tcp_stream).await.unwrap();
+
+    // Build a ShrouDBClient-compatible connection via raw RESP3 over TLS.
+    let (r, w) = tokio::io::split(tls_stream);
+    let mut reader = tokio::io::BufReader::new(r);
+    let mut writer = tokio::io::BufWriter::new(w);
+
+    // Send PING as RESP3
+    use tokio::io::AsyncWriteExt;
+    writer.write_all(b"*1\r\n$4\r\nPING\r\n").await.unwrap();
+    writer.flush().await.unwrap();
+
+    // Read response
+    use tokio::io::AsyncBufReadExt;
+    let mut line = String::new();
+    reader.read_line(&mut line).await.unwrap();
+    // Should get either +PONG or a map with status: PONG
+    assert!(
+        line.contains("PONG") || line.starts_with('%') || line.starts_with('+'),
+        "unexpected TLS response: {line}"
+    );
+}
+
+#[tokio::test]
+async fn tls_server_rejects_plain_tcp() {
+    let cert_dir = tempfile::tempdir().expect("tempdir");
+    let (cert_path, key_path) = generate_self_signed_cert(cert_dir.path());
+
+    let config = TestServerConfig {
+        tls_cert: Some(cert_path),
+        tls_key: Some(key_path),
+        ..Default::default()
+    };
+
+    let server = TestServer::start_with_config(config)
+        .await
+        .expect("TLS server failed to start");
+
+    // Try connecting with plain TCP (no TLS) -- should fail
+    let result = shroudb_client::ShrouDBClient::connect(&server.addr).await;
+    match result {
+        Ok(mut client) => {
+            // Connection might succeed at TCP level but PING should fail
+            // because the server expects a TLS handshake, not raw RESP3.
+            let ping_result = client.ping().await;
+            assert!(
+                ping_result.is_err(),
+                "plain TCP PING should fail against TLS server"
+            );
+        }
+        Err(_) => {
+            // Connection refused or reset is also acceptable
+        }
+    }
+}
+
+// =====================================================================
+// Config hot-reload
+// =====================================================================
+
+#[tokio::test]
+async fn config_hot_reload_swaps_auth_tokens() {
+    let config = TestServerConfig {
+        auth_tokens: vec![TestToken {
+            raw: "token-alpha".into(),
+            tenant: "t".into(),
+            actor: "a".into(),
+            platform: true,
+            grants: vec![],
+        }],
+        ..Default::default()
+    };
+    let server = TestServer::start_with_config(config)
+        .await
+        .expect("server failed to start");
+
+    // Verify token A works
+    let mut c = server.authed_client("token-alpha").await;
+    c.namespace_create("reload-test").await.unwrap();
+    drop(c);
+
+    // Write new config with only token B (replacing token A)
+    let new_config = TestServerConfig {
+        auth_tokens: vec![TestToken {
+            raw: "token-beta".into(),
+            tenant: "t".into(),
+            actor: "b".into(),
+            platform: true,
+            grants: vec![],
+        }],
+        ..Default::default()
+    };
+    let new_toml = generate_config_for_reload(&server.addr, &new_config);
+    std::fs::write(server.config_path(), new_toml).unwrap();
+
+    // The reloader polls every 10 seconds. Wait long enough for it to pick up the change.
+    tokio::time::sleep(Duration::from_secs(15)).await;
+
+    // Token A should now be rejected
+    let mut c = server.client().await;
+    let result = c.auth("token-alpha").await;
+    assert!(
+        result.is_err(),
+        "old token should be rejected after config reload"
+    );
+
+    // Token B should work
+    let mut c = server.authed_client("token-beta").await;
+    c.put("reload-test", b"reloaded", b"yes").await.unwrap();
+}
+
+/// Generate config TOML for a reload test. Mirrors the harness generate_config
+/// but is callable from the test module.
+fn generate_config_for_reload(bind: &str, config: &TestServerConfig) -> String {
+    let mut toml = format!(
+        r#"[server]
+bind = "{bind}"
+"#
+    );
+
+    if let Some(limit) = config.rate_limit {
+        toml.push_str(&format!("rate_limit_per_second = {limit}\n"));
+    }
+
+    toml.push_str("\n[storage]\n");
+
+    if !config.auth_tokens.is_empty() {
+        toml.push_str("\n[auth]\nmethod = \"token\"\n\n");
+        for token in &config.auth_tokens {
+            toml.push_str(&format!(
+                "[auth.tokens.\"{}\"]\ntenant = \"{}\"\nactor = \"{}\"\nplatform = {}\n",
+                token.raw, token.tenant, token.actor, token.platform
+            ));
+            if !token.grants.is_empty() {
+                toml.push_str("grants = [\n");
+                for grant in &token.grants {
+                    let scopes: Vec<String> =
+                        grant.scopes.iter().map(|s| format!("\"{s}\"")).collect();
+                    toml.push_str(&format!(
+                        "  {{ namespace = \"{}\", scopes = [{}] }},\n",
+                        grant.namespace,
+                        scopes.join(", ")
+                    ));
+                }
+                toml.push_str("]\n");
+            }
+            toml.push('\n');
+        }
+    }
+
+    for webhook in &config.webhooks {
+        toml.push_str(&format!(
+            "[[webhooks]]\nurl = \"{}\"\nsecret = \"{}\"\n",
+            webhook.url, webhook.secret
+        ));
+        if !webhook.events.is_empty() {
+            let events: Vec<String> = webhook.events.iter().map(|e| format!("\"{e}\"")).collect();
+            toml.push_str(&format!("events = [{}]\n", events.join(", ")));
+        }
+        if !webhook.namespaces.is_empty() {
+            let ns: Vec<String> = webhook
+                .namespaces
+                .iter()
+                .map(|n| format!("\"{n}\""))
+                .collect();
+            toml.push_str(&format!("namespaces = [{}]\n", ns.join(", ")));
+        }
+        toml.push('\n');
+    }
+
+    toml
+}
+
+// =====================================================================
+// Rekey
+// =====================================================================
+
+#[tokio::test]
+async fn rekey_preserves_data_with_new_master_key() {
+    let new_key = "1111111111111111111111111111111111111111111111111111111111111111";
+
+    let mut server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    // Create data
+    c.namespace_create("rekey-ns").await.unwrap();
+    c.put("rekey-ns", b"greeting", b"hello").await.unwrap();
+    c.put("rekey-ns", b"greeting", b"hello-v2").await.unwrap();
+    c.put("rekey-ns", b"count", b"42").await.unwrap();
+
+    let data_dir = server.data_dir.path().to_path_buf();
+    let config_path = server.config_path();
+
+    // Stop the server
+    drop(c);
+    server.stop();
+
+    // Run rekey subcommand: old_key -> new_key
+    let old_key = &server.master_key;
+    let output = run_offline_subcommand(
+        &data_dir,
+        &config_path,
+        &["rekey", "--old-key", old_key, "--new-key", new_key],
+    );
+    assert!(
+        output.status.success(),
+        "rekey failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Start a NEW server on the same data dir with the new master key.
+    // We need to take ownership of the data_dir TempDir so it is not dropped.
+    // Since server.data_dir is still owned by server, we extract it.
+    let data_dir_temp = std::mem::replace(&mut server.data_dir, tempfile::tempdir().unwrap());
+    let server2 = start_on_data_dir(data_dir_temp, new_key)
+        .await
+        .expect("server with new key failed to start");
+
+    let mut c2 = server2.client().await;
+
+    // Verify data is accessible with the new key
+    let entry = c2.get("rekey-ns", b"greeting").await.unwrap();
+    assert_eq!(entry.value, b"hello-v2");
+    assert_eq!(entry.version, 2);
+
+    let entry = c2.get("rekey-ns", b"count").await.unwrap();
+    assert_eq!(entry.value, b"42");
+
+    let versions = c2.versions("rekey-ns", b"greeting").await.unwrap();
+    assert_eq!(versions.len(), 2);
+}
+
+// =====================================================================
+// Doctor
+// =====================================================================
+
+#[tokio::test]
+async fn doctor_healthy_data_dir() {
+    let mut server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.namespace_create("doctor-test").await.unwrap();
+    c.put("doctor-test", b"k", b"v").await.unwrap();
+
+    let data_path = server.data_dir.path().to_path_buf();
+    let config_path = server.config_path();
+
+    drop(c);
+    server.stop();
+
+    let output = run_offline_subcommand(&data_path, &config_path, &["doctor"]);
+    assert!(
+        output.status.success(),
+        "doctor failed on healthy data: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("All checks passed"),
+        "doctor output should contain success message, got: {stderr}"
+    );
+}
+
+#[tokio::test]
+async fn doctor_detects_wrong_master_key() {
+    let mut server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.namespace_create("corrupt-test").await.unwrap();
+    c.put("corrupt-test", b"k", b"v").await.unwrap();
+
+    let data_path = server.data_dir.path().to_path_buf();
+    let config_path = server.config_path();
+
+    drop(c);
+    server.stop();
+
+    // Run doctor with a WRONG master key -- should fail to open storage
+    // because encrypted WAL entries cannot be decrypted.
+    let wrong_key = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    let output = run_offline_subcommand_with_key(&data_path, &config_path, &["doctor"], wrong_key);
+    // Doctor should report a storage failure (non-zero exit or FAILED in stderr)
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success() || stderr.contains("FAILED"),
+        "doctor should detect wrong key, exit={}, stderr={}",
+        output.status,
+        stderr
+    );
+}
+
+// =====================================================================
+// Webhooks
+// =====================================================================
+
+#[tokio::test]
+async fn webhook_delivers_signed_event() {
+    // Start a minimal TCP listener to receive webhook POSTs
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let webhook_port = listener.local_addr().unwrap().port();
+    let webhook_url = format!("http://127.0.0.1:{webhook_port}/webhook");
+    let webhook_secret = "test-webhook-secret";
+
+    let config = TestServerConfig {
+        webhooks: vec![TestWebhook {
+            url: webhook_url,
+            secret: webhook_secret.into(),
+            events: vec!["put".into()],
+            namespaces: vec![],
+        }],
+        ..Default::default()
+    };
+
+    let server = TestServer::start_with_config(config)
+        .await
+        .expect("server failed to start");
+
+    // Accept webhook connections in a background thread
+    listener.set_nonblocking(false).unwrap();
+    let accept_handle = std::thread::spawn(move || -> Option<(String, String)> {
+        listener
+            .set_nonblocking(false)
+            .expect("set_nonblocking failed");
+        // Set a timeout so the test does not hang forever
+        listener
+            .set_nonblocking(false)
+            .expect("set_nonblocking failed");
+        let timeout = std::time::Duration::from_secs(10);
+        listener.set_nonblocking(true).unwrap();
+
+        let start = std::time::Instant::now();
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if start.elapsed() > timeout {
+                        return None;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    continue;
+                }
+                Err(_) => return None,
+            }
+        };
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+
+        let mut reader = BufReader::new(&stream);
+        let mut request_text = String::new();
+
+        // Read HTTP headers
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    request_text.push_str(&line);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        // Read body based on Content-Length
+        let content_length: usize = request_text
+            .lines()
+            .find(|l| l.to_lowercase().starts_with("content-length:"))
+            .and_then(|l| l.split(':').nth(1))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0);
+
+        let mut body_buf = vec![0u8; content_length];
+        if content_length > 0 {
+            use std::io::Read;
+            reader.read_exact(&mut body_buf).ok();
+        }
+        let body = String::from_utf8_lossy(&body_buf).to_string();
+
+        // Send a minimal HTTP 200 response
+        let mut stream_w = reader.into_inner();
+        let _ = stream_w.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        let _ = stream_w.flush();
+
+        Some((request_text, body))
+    });
+
+    // Trigger a webhook event by writing data
+    let mut c = server.client().await;
+    c.namespace_create("webhook-test").await.unwrap();
+    c.put("webhook-test", b"key1", b"value1").await.unwrap();
+
+    // Wait for the webhook to be received
+    let result = accept_handle
+        .join()
+        .expect("webhook listener thread panicked");
+    let (headers, body) = result.expect("no webhook request received within timeout");
+
+    // HTTP headers are case-insensitive; reqwest lowercases them on the wire
+    let headers_lower = headers.to_lowercase();
+
+    // Verify X-ShrouDB-Signature-256 header exists
+    assert!(
+        headers_lower.contains("x-shroudb-signature-256"),
+        "webhook request missing signature header, headers: {headers}"
+    );
+
+    // Verify the signature header has the expected format
+    let sig_line = headers
+        .lines()
+        .find(|l| l.to_lowercase().contains("x-shroudb-signature-256"))
+        .unwrap();
+    assert!(
+        sig_line.contains("sha256="),
+        "signature header should contain sha256= prefix: {sig_line}"
+    );
+
+    // Verify the body is valid JSON with event data
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).expect("webhook body should be valid JSON");
+    assert!(
+        parsed.get("namespace").is_some() || parsed.get("event").is_some(),
+        "webhook body should contain event data: {body}"
+    );
+
+    // Verify X-ShrouDB-Event header
+    assert!(
+        headers_lower.contains("x-shroudb-event"),
+        "webhook request missing event type header"
+    );
 }
