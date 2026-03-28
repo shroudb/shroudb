@@ -196,6 +196,24 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("config file not found: {}", cli.config.display());
     };
 
+    // Apply CLI/env overrides BEFORE telemetry (data_dir affects audit.log path)
+    if let Some(ref bind) = cli.bind {
+        cfg.server.bind = bind
+            .parse()
+            .with_context(|| format!("invalid bind address: {bind}"))?;
+    }
+    if let Some(ref data_dir) = cli.data_dir {
+        cfg.storage.data_dir = data_dir.clone();
+    }
+
+    // Ensure data directory exists before telemetry init (audit.log goes there)
+    std::fs::create_dir_all(&cfg.storage.data_dir).with_context(|| {
+        format!(
+            "creating data directory: {}",
+            cfg.storage.data_dir.display()
+        )
+    })?;
+
     // Initialize telemetry (console + audit file + optional OTEL)
     let log_level = cli.log_level.as_deref().unwrap_or("info");
     // SAFETY: called before any threads are spawned (single-threaded main init).
@@ -223,16 +241,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::debug!("core dumps disabled");
     }
 
-    // Apply CLI/env overrides (precedence: CLI > env > TOML > default)
-    // Clap's `env` attribute already merges CLI and env for us.
-    if let Some(ref bind) = cli.bind {
-        cfg.server.bind = bind
-            .parse()
-            .with_context(|| format!("invalid bind address: {bind}"))?;
-    }
-    if let Some(ref data_dir) = cli.data_dir {
-        cfg.storage.data_dir = data_dir.clone();
-    }
+    // (CLI overrides already applied above, before telemetry init)
 
     // Master key
     let key_source: Box<dyn MasterKeySource> = if std::env::var("SHROUDB_MASTER_KEY").is_ok()

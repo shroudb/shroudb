@@ -2301,6 +2301,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shroudb-acl",
+ "shroudb-client",
  "shroudb-crypto",
  "shroudb-protocol",
  "shroudb-storage",
