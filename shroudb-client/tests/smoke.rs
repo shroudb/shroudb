@@ -104,9 +104,9 @@ async fn client_smoke_test() {
     // VERSIONS
     let versions = client.versions("smoke.test", b"key1").await.unwrap();
     assert_eq!(versions.len(), 3);
-    assert_eq!(versions[0].state, "Deleted");
-    assert_eq!(versions[1].state, "Active");
-    assert_eq!(versions[2].state, "Active");
+    assert_eq!(versions[0].state, "deleted");
+    assert_eq!(versions[1].state, "active");
+    assert_eq!(versions[2].state, "active");
 
     // LIST (empty after delete)
     let page = client.list("smoke.test").await.unwrap();
