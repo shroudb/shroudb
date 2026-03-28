@@ -14,6 +14,9 @@ pub enum Resp3Frame {
     BulkString(Vec<u8>),
     Array(Vec<Resp3Frame>),
     Map(Vec<(Resp3Frame, Resp3Frame)>),
+    /// RESP3 Push frame — server-initiated message (e.g., subscription events).
+    /// Wire format: `>count\r\n` followed by `count` frames.
+    Push(Vec<Resp3Frame>),
     Null,
 }
 

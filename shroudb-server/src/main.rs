@@ -19,6 +19,7 @@ mod config;
 mod connection;
 mod scheduler;
 mod server;
+mod webhooks;
 
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -294,6 +295,14 @@ async fn main() -> anyhow::Result<()> {
     // Background tasks
     let scheduler_handles = scheduler::spawn_all(Arc::clone(&engine), shutdown_rx.clone());
 
+    // Webhook actors
+    let webhook_handles = if !cfg.webhooks.is_empty() {
+        tracing::info!(count = cfg.webhooks.len(), "starting webhook actors");
+        webhooks::spawn_all(cfg.webhooks.clone(), &engine, &shutdown_rx)
+    } else {
+        Vec::new()
+    };
+
     // Ctrl-C / SIGTERM handler
     let stx = shutdown_tx.clone();
     tokio::spawn(async move {
@@ -314,6 +323,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Shutdown
     for handle in scheduler_handles {
+        handle.abort();
+    }
+    for handle in webhook_handles {
         handle.abort();
     }
     engine.shutdown().await.map_err(|e| anyhow::anyhow!(e))?;

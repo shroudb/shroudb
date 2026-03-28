@@ -20,6 +20,38 @@ pub struct ShrouDBConfig {
     pub storage: StorageConfig,
     #[serde(default)]
     pub auth: Option<AuthConfig>,
+    #[serde(default)]
+    pub webhooks: Vec<WebhookConfig>,
+}
+
+/// Configuration for a single webhook endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebhookConfig {
+    /// URL to POST events to.
+    pub url: String,
+    /// HMAC-SHA256 secret for signing payloads. Sent in `X-ShrouDB-Signature-256` header.
+    pub secret: String,
+    /// Event types to deliver. Empty = all events.
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// Namespace patterns to match. Empty = all namespaces.
+    /// Supports exact match and trailing `*` wildcard (e.g. `"myapp.*"`).
+    #[serde(default)]
+    pub namespaces: Vec<String>,
+    /// Maximum delivery retries (default: 5).
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    /// HTTP request timeout in milliseconds (default: 5000).
+    #[serde(default = "default_webhook_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_max_retries() -> u32 {
+    5
+}
+
+fn default_webhook_timeout_ms() -> u64 {
+    5000
 }
 
 #[derive(Debug, Deserialize)]

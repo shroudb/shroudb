@@ -128,6 +128,27 @@ fn read_frame_depth<'a>(
                 }
                 Ok(Some(Resp3Frame::Map(pairs)))
             }
+            b'>' => {
+                let line = read_line(reader).await?;
+                let count: usize = line
+                    .parse()
+                    .map_err(|e| ProtocolError::InvalidFormat(format!("bad push length: {e}")))?;
+                if count > MAX_COLLECTION_SIZE {
+                    return Err(ProtocolError::FrameTooLarge(count));
+                }
+                let mut frames = Vec::with_capacity(count);
+                for _ in 0..count {
+                    match read_frame_depth(reader, depth + 1).await? {
+                        Some(f) => frames.push(f),
+                        None => {
+                            return Err(ProtocolError::InvalidFormat(
+                                "unexpected EOF in push frame".into(),
+                            ));
+                        }
+                    }
+                }
+                Ok(Some(Resp3Frame::Push(frames)))
+            }
             b'_' => {
                 // Null: read the trailing \r\n
                 let mut crlf = [0u8; 2];

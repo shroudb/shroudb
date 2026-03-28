@@ -23,6 +23,11 @@ impl<S: Store> CommandDispatcher<S> {
         Self { store, engine }
     }
 
+    /// Access the underlying store (e.g., for connection-level SUBSCRIBE).
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
     /// Execute a command with the given auth context.
     pub async fn execute(&self, cmd: Command, auth: Option<&AuthContext>) -> CommandResponse {
         // Pipeline: execute each sub-command (boxed to avoid infinite future size)

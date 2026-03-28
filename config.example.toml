@@ -49,3 +49,17 @@ data_dir = "./data"
 # tenant = "platform"
 # actor = "admin"
 # platform = true    # unrestricted access, cross-tenant capable
+
+# --- Webhooks ---
+#
+# HTTP endpoints that receive signed event notifications.
+# Each webhook receives POST requests with JSON event payloads
+# and an HMAC-SHA256 signature in X-ShrouDB-Signature-256.
+
+# [[webhooks]]
+# url = "https://example.com/shroudb-hook"
+# secret = "your-hmac-secret"
+# events = ["put", "delete"]             # empty = all events
+# namespaces = ["myapp.*"]               # empty = all namespaces, supports trailing *
+# max_retries = 5                        # default: 5
+# timeout_ms = 5000                      # default: 5000

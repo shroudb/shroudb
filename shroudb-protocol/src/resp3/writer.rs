@@ -49,6 +49,16 @@ pub async fn write_frame(
                 Box::pin(write_frame(writer, v)).await?;
             }
         }
+        Resp3Frame::Push(frames) => {
+            writer.write_all(b">").await?;
+            writer
+                .write_all(frames.len().to_string().as_bytes())
+                .await?;
+            writer.write_all(b"\r\n").await?;
+            for f in frames {
+                Box::pin(write_frame(writer, f)).await?;
+            }
+        }
         Resp3Frame::Null => {
             writer.write_all(b"_\r\n").await?;
         }

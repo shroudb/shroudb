@@ -10,7 +10,7 @@ use shroudb_protocol::resp3::serialize::response_to_frame;
 use shroudb_protocol::resp3::writer::write_frame;
 use shroudb_protocol::response::{ResponseMap, ResponseValue};
 use shroudb_protocol::{CommandDispatcher, CommandResponse};
-use shroudb_store::Store;
+use shroudb_store::{EventType, Store, SubscriptionEvent, SubscriptionFilter};
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::watch;
 
@@ -202,6 +202,95 @@ pub async fn handle_connection<S: Store, V: TokenValidator>(
             }
         }
 
+        // Handle SUBSCRIBE at connection level — enters streaming mode
+        if let shroudb_protocol::Command::Subscribe {
+            ref ns,
+            ref key,
+            ref events,
+        } = command
+        {
+            // ACL check
+            let requirement = command.acl_requirement();
+            if let Some(ref ctx) = auth {
+                if let Err(e) = ctx.check(&requirement) {
+                    let response = CommandResponse::Error(shroudb_protocol::CommandError::Denied {
+                        reason: e.to_string(),
+                    });
+                    let response_frame = response_to_frame(&response);
+                    if write_frame(&mut writer, &response_frame).await.is_err() {
+                        break;
+                    }
+                    let _ = writer.flush().await;
+                    continue;
+                }
+            } else if auth_required {
+                let response =
+                    CommandResponse::Error(shroudb_protocol::CommandError::NotAuthenticated);
+                let response_frame = response_to_frame(&response);
+                if write_frame(&mut writer, &response_frame).await.is_err() {
+                    break;
+                }
+                let _ = writer.flush().await;
+                continue;
+            }
+
+            // Parse event type filters
+            let event_filter: Vec<EventType> = events
+                .iter()
+                .filter_map(|e| match e.to_ascii_lowercase().as_str() {
+                    "put" => Some(EventType::Put),
+                    "delete" => Some(EventType::Delete),
+                    _ => None,
+                })
+                .collect();
+
+            let filter = SubscriptionFilter {
+                key: key.clone(),
+                events: event_filter,
+            };
+
+            // Subscribe via the store
+            let mut subscription = match dispatcher.store().subscribe(ns, filter).await {
+                Ok(sub) => sub,
+                Err(e) => {
+                    let response = CommandResponse::Error(shroudb_protocol::CommandError::Store(e));
+                    let response_frame = response_to_frame(&response);
+                    if write_frame(&mut writer, &response_frame).await.is_err() {
+                        break;
+                    }
+                    let _ = writer.flush().await;
+                    continue;
+                }
+            };
+
+            // Send OK to confirm subscription is active
+            let ok_response = CommandResponse::Success(
+                ResponseMap::ok().with("namespace", ResponseValue::String(ns.clone())),
+            );
+            if write_frame(&mut writer, &response_to_frame(&ok_response))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            let _ = writer.flush().await;
+
+            // Enter streaming loop: read events from subscription + commands from client
+            let exited_cleanly = handle_subscription(
+                &mut reader,
+                &mut writer,
+                &mut subscription,
+                &mut shutdown_rx,
+            )
+            .await;
+
+            if !exited_cleanly {
+                break;
+            }
+            // UNSUBSCRIBE received — fall through to resume normal command loop
+            continue;
+        }
+
         // Dispatch
         let response = dispatcher.execute(command, auth.as_ref()).await;
 
@@ -215,4 +304,112 @@ pub async fn handle_connection<S: Store, V: TokenValidator>(
             break;
         }
     }
+}
+
+/// Subscription streaming loop. Returns `true` if the client cleanly unsubscribed
+/// (so the caller should resume normal command processing), or `false` if the
+/// connection should be closed.
+async fn handle_subscription<S: shroudb_store::Subscription>(
+    reader: &mut BufReader<impl tokio::io::AsyncRead + Unpin + Send>,
+    writer: &mut BufWriter<impl AsyncWrite + Unpin + Send>,
+    subscription: &mut S,
+    shutdown_rx: &mut watch::Receiver<bool>,
+) -> bool {
+    loop {
+        tokio::select! {
+            biased;
+
+            // Shutdown signal
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    return false;
+                }
+            }
+
+            // Next event from subscription
+            event = subscription.recv() => {
+                match event {
+                    Some(ev) => {
+                        let frame = subscription_event_to_push_frame(&ev);
+                        if write_frame(writer, &frame).await.is_err() {
+                            return false;
+                        }
+                        if writer.flush().await.is_err() {
+                            return false;
+                        }
+                    }
+                    None => {
+                        // Subscription closed (engine shutdown)
+                        let frame = Resp3Frame::Push(vec![
+                            Resp3Frame::SimpleString("subscription".into()),
+                            Resp3Frame::SimpleString("closed".into()),
+                        ]);
+                        let _ = write_frame(writer, &frame).await;
+                        let _ = writer.flush().await;
+                        return true;
+                    }
+                }
+            }
+
+            // Client sent a command while subscribed (only UNSUBSCRIBE and PING are valid)
+            result = read_frame(reader) => {
+                match result {
+                    Ok(Some(frame)) => {
+                        match parse_command(frame) {
+                            Ok(shroudb_protocol::Command::Unsubscribe) => {
+                                let response = CommandResponse::Success(ResponseMap::ok());
+                                let response_frame = response_to_frame(&response);
+                                let _ = write_frame(writer, &response_frame).await;
+                                let _ = writer.flush().await;
+                                return true;
+                            }
+                            Ok(shroudb_protocol::Command::Ping) => {
+                                let response = CommandResponse::Success(
+                                    ResponseMap::ok()
+                                        .with("message", ResponseValue::String("PONG".into())),
+                                );
+                                let _ = write_frame(writer, &response_to_frame(&response)).await;
+                                let _ = writer.flush().await;
+                            }
+                            Ok(_) => {
+                                let err = Resp3Frame::SimpleError(
+                                    "ERR only UNSUBSCRIBE and PING allowed during subscription".into(),
+                                );
+                                let _ = write_frame(writer, &err).await;
+                                let _ = writer.flush().await;
+                            }
+                            Err(_) => {
+                                // Parse error during subscription — ignore
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        // Client disconnected
+                        return false;
+                    }
+                    Err(_) => {
+                        // Protocol error
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Convert a subscription event into a RESP3 push frame.
+fn subscription_event_to_push_frame(event: &SubscriptionEvent) -> Resp3Frame {
+    let event_str = match event.event {
+        EventType::Put => "put",
+        EventType::Delete => "delete",
+    };
+    Resp3Frame::Push(vec![
+        Resp3Frame::SimpleString("subscribe".into()),
+        Resp3Frame::SimpleString(event_str.into()),
+        Resp3Frame::BulkString(event.namespace.as_bytes().to_vec()),
+        Resp3Frame::BulkString(event.key.clone()),
+        Resp3Frame::Integer(event.version as i64),
+        Resp3Frame::BulkString(event.actor.as_bytes().to_vec()),
+        Resp3Frame::Integer(event.timestamp as i64),
+    ])
 }
