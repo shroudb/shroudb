@@ -4,47 +4,9 @@ A versioned, encrypted state store where tenancy, access control, and cryptograp
 
 ## Why ShrouDB
 
-Most systems treat encryption, access control, multi-tenancy, and auditability as separate concerns layered above storage.
+Most systems treat encryption, access control, and multi-tenancy as separate concerns bolted onto storage. ShrouDB makes them properties of the storage layer itself — every namespace gets its own HKDF-derived encryption key, every access is scoped to an authenticated identity, and every mutation is versioned and emitted as a structured event.
 
-ShrouDB makes them properties of the storage layer itself:
-
-- Every write is **versioned** and auditable — no blind overwrites, no data erasure ambiguity
-- Every tenant is **cryptographically isolated** via HKDF-derived keys — unlike traditional multi-tenant systems that rely on logical separation, ShrouDB derives independent encryption keys per tenant and namespace, making isolation a cryptographic property rather than a policy decision
-- Every access is **scoped and enforced** at the protocol boundary — before handlers run
-- Every change is emitted as a **structured event** with version metadata, enabling real-time replication, indexing, and downstream processing without external CDC systems
-
-ShrouDB exposes a minimal set of primitives — versioned keys, namespaces, identity-scoped access, and event streams — from which higher-level systems can be composed.
-
-## Mental model
-
-- A versioned log of state, not just current values
-- Partitioned into namespaces with independent encryption keys
-- Accessed through identity-scoped tokens
-- Emitting a stream of changes for every mutation
-
-Applications build on these primitives rather than reimplementing them.
-
-## Core guarantees
-
-- **Versioned state** — every PUT increments the version. Full history queryable via VERSIONS. DELETE writes a tombstone, not an erasure.
-- **Cryptographic tenant isolation** — HKDF-SHA256 derives a unique AES-256-GCM key per namespace. Tenant identity resolved from auth token. Compromise of one namespace's data or derived key does not expose other namespaces, as each uses independently derived encryption keys.
-- **Tombstone deletes** — deletions are auditable events with version history, not silent data removal.
-
-## Security model
-
-- **Token-scoped access** with namespace-level read/write/admin grants, enforced at dispatch
-- **TLS and mTLS** with constant-time token validation
-- **Zeroize-on-drop** and mlock-pinned key material. Core dumps disabled.
-- **Audit trail** — every write operation logged to structured audit file. Reads are not logged.
-
-## System capabilities
-
-- **RESP3 wire protocol** — uses the RESP3 binary protocol for efficient, well-understood framing. 20 commands, pipelining, push frames. ShrouDB is not Redis and does not aim for Redis compatibility — it uses RESP3 as a transport layer.
-- **SUBSCRIBE** — real-time change stream with namespace, key, and event type filtering
-- **Webhooks** — HMAC-SHA256 signed HTTP delivery with retry and backoff
-- **Namespaces** with optional JSON metadata schemas (enforced on write, validated on demand)
-- **Export/Import** — encrypted namespace bundles for migration and backup
-- **Hot-reload** — auth tokens and rate limits reload from config without restart
+This means isolation is cryptographic (not just logical), audit trails are inherent (not bolted on), and change propagation is built in (not requiring external CDC). The result is a minimal set of primitives — versioned keys, namespaces, identity-scoped tokens, and event streams — from which higher-level systems can be composed.
 
 ## Quick Start
 
@@ -62,9 +24,9 @@ docker run -p 6399:6399 \
   ghcr.io/shroudb/shroudb
 ```
 
-The server listens on `0.0.0.0:6399`. Zero config required for development.
+Listens on `0.0.0.0:6399`. Zero config for development.
 
-## Example Session
+## Example
 
 ```
 shroudb> NAMESPACE CREATE myapp.users
@@ -88,86 +50,53 @@ version: 2  state: active
 version: 1  state: active
 ```
 
-## Example: Secure Multi-Tenant Backend
+Every PUT creates a new version. DELETE writes a tombstone — the full history remains queryable. The current state is always derivable from its version history, but ShrouDB exposes both the latest value and historical versions directly.
 
-- Store per-tenant application data in isolated namespaces
-- Use tokens to enforce tenant and actor identity
-- Stream changes to downstream services via SUBSCRIBE
-- Maintain full audit history via versioned keys and tombstones
+## What makes this different
 
-Provides a unified foundation that can replace separate systems for secrets, policy, and change propagation in many architectures.
+**Cryptographic tenant isolation.** Each namespace gets a unique AES-256-GCM key derived via HKDF-SHA256 from the master key and tenant context. Compromise of one namespace's data or derived key does not expose others. This is not row-level filtering — it is independent key material per boundary.
 
-## Connection String
+**Versioned state with tombstones.** No blind overwrites. No silent deletes. Every mutation is a new version. Every deletion is an auditable event. Full history retained until compacted.
 
-```
-shroudb://[token@]host[:port]
-shroudb+tls://[token@]host[:port]
-```
+**Identity at the protocol layer.** Auth tokens carry tenant identity, actor name, and namespace-scoped grants. ACL enforcement happens at dispatch — handlers never see unauthorized requests. Tenant identity feeds into key derivation, binding crypto to access control.
 
-## Configuration
+**Durable writes.** Every write is persisted to the write-ahead log before acknowledgment. Periodic snapshots compact the log. Recovery replays WAL entries using the original timestamps — no clock-dependent corruption.
 
-| Setting | CLI flag | Env var | Default |
-|---------|----------|---------|---------|
-| Config file | `-c, --config` | `SHROUDB_CONFIG` | `config.toml` |
-| Master key | — | `SHROUDB_MASTER_KEY` | ephemeral (dev) |
-| Master key file | — | `SHROUDB_MASTER_KEY_FILE` | — |
-| Data directory | `--data-dir` | `SHROUDB_DATA_DIR` | `./data` |
-| Bind address | `--bind` | `SHROUDB_BIND` | `0.0.0.0:6399` |
-| Log level | `--log-level` | `SHROUDB_LOG_LEVEL` | `info` |
+**Built-in change stream.** Every mutation emits a structured event (namespace, key, version, operation, actor, metadata). SUBSCRIBE filters by namespace, key, or event type. Webhooks deliver HMAC-signed events to HTTP endpoints with retry. No external CDC pipeline needed.
 
-Precedence: CLI flag > env var > TOML config > default.
+## Security
 
-### Master Key
-
-```sh
-openssl rand -hex 32
-export SHROUDB_MASTER_KEY="<64-hex-chars>"
-```
-
-Without a master key, the server starts in dev mode with an ephemeral key — data will not survive restarts.
-
-See [`config.example.toml`](config.example.toml) for all options including auth tokens, TLS, rate limits, webhooks, and storage tuning.
+- AES-256-GCM encryption at rest with per-namespace HKDF-derived keys
+- Constant-time token validation (no timing side-channels)
+- Zeroize-on-drop and mlock-pinned key material
+- TLS and mTLS support
+- Core dumps disabled
+- Structured audit log for all write operations (reads are not logged)
 
 ## Commands
 
 20 commands across six categories:
 
-| Command | Description |
-|---------|-------------|
-| **Connection** | |
-| `AUTH <token>` | Authenticate connection |
-| `PING` | Test connectivity |
-| **Data** | |
-| `PUT <ns> <key> <value> [META <json>]` | Store a value (auto-increments version) |
-| `GET <ns> <key> [VERSION <n>] [META]` | Retrieve a value |
-| `DELETE <ns> <key>` | Delete (tombstone) |
-| `LIST <ns> [PREFIX <p>] [CURSOR <c>] [LIMIT <n>]` | List active keys |
-| `VERSIONS <ns> <key> [LIMIT <n>] [FROM <v>]` | Version history |
-| **Namespace** | |
-| `NAMESPACE CREATE <name> [SCHEMA <json>]` | Create namespace |
-| `NAMESPACE DROP <name> [FORCE]` | Drop namespace |
-| `NAMESPACE LIST` | List namespaces |
-| `NAMESPACE INFO <name>` | Namespace metadata |
-| `NAMESPACE ALTER <name> [SCHEMA <json>]` | Update config |
-| `NAMESPACE VALIDATE <name>` | Check entries against schema |
-| **Batch** | |
-| `PIPELINE [REQUEST_ID <id>] <commands...>` | Execute multiple commands as a single unit. If any command fails, no partial writes are committed. Optional REQUEST_ID for idempotent retries. |
-| **Streaming** | |
-| `SUBSCRIBE <ns> [KEY <k>] [EVENTS <types>]` | Subscribe to changes. Events include namespace, key, version, operation type, and actor. |
-| `UNSUBSCRIBE` | End subscription |
-| **Operational** | |
-| `HEALTH` | Health check |
-| `CONFIG GET/SET` | Runtime config |
-| `COMMAND LIST` | List all commands |
+| Category | Command | |
+|----------|---------|---|
+| Connection | `AUTH <token>` | Authenticate |
+| | `PING` | Connectivity check |
+| Data | `PUT <ns> <key> <value> [META <json>]` | Store (auto-increments version) |
+| | `GET <ns> <key> [VERSION <n>] [META]` | Retrieve |
+| | `DELETE <ns> <key>` | Tombstone |
+| | `LIST <ns> [PREFIX <p>] [CURSOR <c>] [LIMIT <n>]` | List active keys |
+| | `VERSIONS <ns> <key> [LIMIT <n>] [FROM <v>]` | Version history |
+| Namespace | `NAMESPACE CREATE <name> [SCHEMA <json>]` | Create with optional metadata schema |
+| | `NAMESPACE DROP <name> [FORCE]` | Drop |
+| | `NAMESPACE LIST / INFO / ALTER / VALIDATE` | Manage |
+| Batch | `PIPELINE [REQUEST_ID <id>] <commands...>` | Atomic batch — no partial writes on failure |
+| Streaming | `SUBSCRIBE <ns> [KEY <k>] [EVENTS <types>]` | Real-time event stream |
+| | `UNSUBSCRIBE` | End subscription |
+| Operational | `HEALTH` / `CONFIG GET/SET` / `COMMAND LIST` | |
 
 ## Access Control
 
-When `auth.method = "token"` is configured, clients must `AUTH` before any data command. Each token carries:
-
-- **Tenant** — cryptographic boundary (HKDF key derivation context)
-- **Actor** — audit trail identity
-- **Grants** — namespace-scoped `read` / `write` permissions
-- **Platform flag** — unrestricted cross-tenant access
+Tokens carry tenant identity, actor name, and namespace-scoped grants:
 
 ```toml
 [auth]
@@ -182,54 +111,59 @@ grants = [
 ]
 ```
 
-ACL is enforced at the dispatcher level — handlers never see unauthorized requests.
+Tenant identity is the HKDF derivation context — the crypto boundary is the same as the access boundary.
+
+## Configuration
+
+| Setting | CLI flag | Env var | Default |
+|---------|----------|---------|---------|
+| Config file | `-c, --config` | `SHROUDB_CONFIG` | `config.toml` |
+| Master key | — | `SHROUDB_MASTER_KEY` | ephemeral (dev) |
+| Master key file | — | `SHROUDB_MASTER_KEY_FILE` | — |
+| Data directory | `--data-dir` | `SHROUDB_DATA_DIR` | `./data` |
+| Bind address | `--bind` | `SHROUDB_BIND` | `0.0.0.0:6399` |
+| Log level | `--log-level` | `SHROUDB_LOG_LEVEL` | `info` |
+
+Precedence: CLI > env > TOML > default. Auth tokens and rate limits hot-reload from config without restart.
+
+```sh
+openssl rand -hex 32                        # generate master key
+export SHROUDB_MASTER_KEY="<64-hex-chars>"  # set it
+```
+
+Without a master key, dev mode uses an ephemeral key — data won't survive restarts.
+
+See [`config.example.toml`](config.example.toml) for all options.
 
 ## Installation
 
-### Docker
+**Docker:** `docker run -p 6399:6399 -e SHROUDB_MASTER_KEY="$(openssl rand -hex 32)" -v shroudb-data:/data ghcr.io/shroudb/shroudb`
 
-```sh
-docker run -p 6399:6399 \
-  -e SHROUDB_MASTER_KEY="$(openssl rand -hex 32)" \
-  -v shroudb-data:/data \
-  ghcr.io/shroudb/shroudb
-```
+**Homebrew:** `brew install shroudb/tap/shroudb`
 
-### Homebrew
+**Binary:** [GitHub Releases](https://github.com/shroudb/shroudb/releases) — Linux (x86_64, aarch64) and macOS (x86_64, Apple Silicon).
 
-```sh
-brew install shroudb/tap/shroudb
-```
-
-### Binary
-
-Download from [GitHub Releases](https://github.com/shroudb/shroudb/releases). Linux (x86_64, aarch64) and macOS (x86_64, Apple Silicon).
+**Connection:** `shroudb://[token@]host[:port]` or `shroudb+tls://[token@]host[:port]`
 
 ## Architecture
 
-- **Storage:** WAL with periodic snapshots, AES-256-GCM encrypted at rest with per-namespace HKDF-derived keys
-- **Wire protocol:** RESP3, 20 commands, ACL middleware, per-connection rate limiting
-- **Deployment:** Embedded (in-process via Store trait) or remote (TCP/TLS via RemoteStore)
-- **Crates:** `shroudb-store` (trait), `shroudb-storage` (engine), `shroudb-acl` (auth), `shroudb-crypto` (AEAD/HKDF), `shroudb-client` (TCP client + RemoteStore)
+Writes go to an encrypted WAL, then to an in-memory index. Periodic snapshots compact the log. The RESP3 protocol handles framing — ShrouDB is not Redis and does not aim for Redis API compatibility.
+
+Two deployment modes: **embedded** (in-process via `Store` trait) or **remote** (TCP/TLS via `RemoteStore`). Engine code is identical in both modes.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full crate map and data flow.
 
 ## Scope
 
-ShrouDB is not designed for large-scale analytical workloads or full relational querying. It is optimized for operational state, security-sensitive data, and system coordination.
+ShrouDB is optimized for operational state, security-sensitive data, and system coordination. It is not designed for analytical workloads or relational querying.
 
 ## Building on ShrouDB
 
-ShrouDB is designed as a foundation for higher-level systems:
+ShrouDB is designed as a foundation for higher-level systems and shared infrastructure components — authentication, secret management, encryption-as-a-service, policy enforcement.
 
-- Authentication and token services
-- Secret management
-- Encryption-as-a-service
-- Policy enforcement and audit
+A token service, for example, stores credentials in a namespace, enforces access via grants, and streams audit events — all through ShrouDB primitives, with no external dependencies for secrets, policy, or change propagation.
 
-For example, a token service can issue credentials stored in ShrouDB, enforce access via namespace-scoped grants, and stream audit events to downstream systems — all without external dependencies.
-
-ShrouDB is designed to be extended — either as a standalone service or embedded as a storage layer within higher-level systems via the `Store` trait.
+The `Store` trait is the extension point. Embed ShrouDB in-process or connect over TCP/TLS — the engine code doesn't change.
 
 ## License
 
