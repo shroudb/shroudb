@@ -7,6 +7,9 @@ use super::{ProtocolError, Resp3Frame};
 /// Maximum bulk string size: 16 MiB.
 const MAX_BULK_SIZE: usize = 16 * 1024 * 1024;
 
+/// Maximum number of elements in an array or map.
+const MAX_COLLECTION_SIZE: usize = 100_000;
+
 /// Maximum nesting depth for arrays and maps.
 const MAX_DEPTH: u8 = 8;
 
@@ -82,6 +85,9 @@ fn read_frame_depth<'a>(
                 let count: usize = line
                     .parse()
                     .map_err(|e| ProtocolError::InvalidFormat(format!("bad array length: {e}")))?;
+                if count > MAX_COLLECTION_SIZE {
+                    return Err(ProtocolError::FrameTooLarge(count));
+                }
                 let mut frames = Vec::with_capacity(count);
                 for _ in 0..count {
                     match read_frame_depth(reader, depth + 1).await? {

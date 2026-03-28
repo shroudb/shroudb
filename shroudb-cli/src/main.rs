@@ -8,23 +8,20 @@ use shroudb_client::connection::Connection;
 
 /// Known command names for tab completion.
 const COMMANDS: &[&str] = &[
-    "ISSUE",
-    "VERIFY",
-    "REVOKE",
-    "REFRESH",
-    "UPDATE",
-    "INSPECT",
-    "ROTATE",
-    "JWKS",
-    "KEYSTATE",
-    "HEALTH",
-    "KEYS",
-    "SUSPEND",
-    "UNSUSPEND",
-    "SCHEMA",
     "AUTH",
-    "CONFIG",
+    "PING",
+    "PUT",
+    "GET",
+    "DELETE",
+    "LIST",
+    "VERSIONS",
+    "NAMESPACE",
+    "PIPELINE",
     "SUBSCRIBE",
+    "UNSUBSCRIBE",
+    "HEALTH",
+    "CONFIG",
+    "COMMAND",
     "help",
     "quit",
     "exit",
@@ -81,8 +78,7 @@ impl rustyline::Helper for ShrouDBHelper {}
     version
 )]
 struct Cli {
-    /// Connection URI (e.g., shroudb://localhost:6399, shroudb+tls://token@host:6399/keyspace).
-    /// Overrides --host, --port, and --tls when provided.
+    /// Connection URI (e.g., shroudb://localhost:6399, shroudb+tls://token@host:6399).
     #[arg(long)]
     uri: Option<String>,
 
@@ -98,7 +94,7 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
-    /// Output raw RESP3 wire format instead of parsed responses.
+    /// Output raw RESP3 wire format.
     #[arg(long)]
     raw: bool,
 
@@ -111,7 +107,6 @@ struct Cli {
     command: Vec<String>,
 }
 
-/// Output mode derived from CLI flags.
 #[derive(Clone, Copy)]
 enum OutputMode {
     Human,
@@ -162,8 +157,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Interactive REPL.
-    println!("Connected to shroudb at {addr}");
-    println!("Type 'help' for command list, 'help <command>' for details, Ctrl-C to exit.\n");
+    let version = env!("CARGO_PKG_VERSION");
+    println!("shroudb-cli v{version} \u{2014} connected to {addr}");
+    println!("Type 'help' for commands, Ctrl-C to exit.");
+    println!();
 
     let config = rustyline::Config::builder().auto_add_history(true).build();
     let helper = ShrouDBHelper {
@@ -173,11 +170,10 @@ async fn main() -> anyhow::Result<()> {
     rl.set_helper(Some(helper));
 
     let history_path = dirs_home().join(".shroudb_history");
-    if let Err(e) = rl.load_history(&history_path) {
-        // Not an error on first run (file doesn't exist yet).
-        if !matches!(e, ReadlineError::Io(_)) {
-            eprintln!("warning: could not load history: {e}");
-        }
+    if let Err(e) = rl.load_history(&history_path)
+        && !matches!(e, ReadlineError::Io(_))
+    {
+        eprintln!("warning: could not load history: {e}");
     }
 
     loop {
@@ -188,7 +184,6 @@ async fn main() -> anyhow::Result<()> {
                     continue;
                 }
 
-                // Per-command help: "help <command>"
                 if let Some(cmd) = line
                     .strip_prefix("help ")
                     .or_else(|| line.strip_prefix("HELP "))
@@ -224,7 +219,6 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Print a response in the requested output mode.
 fn print_output(resp: &Response, mode: OutputMode) {
     match mode {
         OutputMode::Human => resp.print(0),
@@ -249,9 +243,6 @@ fn dirs_home() -> std::path::PathBuf {
 }
 
 /// Split a line into words, respecting double-quoted and single-quoted strings.
-///
-/// Supports backslash escaping within double-quoted strings (`\"`, `\\`).
-/// Single-quoted strings are taken literally (no escape processing).
 fn shell_words(input: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
@@ -310,194 +301,114 @@ fn print_help() {
         r#"
 Commands:
 
-  Credential Operations
-    ISSUE <keyspace> [CLAIMS <json>] [META <json>] [TTL <secs>] [IDEMPOTENCY_KEY <key>]
-    VERIFY <keyspace> <token> [PAYLOAD <data>] [CHECKREV]
-    REVOKE <keyspace> <id>
-    REVOKE <keyspace> FAMILY <family_id>
-    REFRESH <keyspace> <token>
-    UPDATE <keyspace> <credential_id> META <json>
-    INSPECT <keyspace> <credential_id>
+  Data Operations
+    PUT <ns> <key> <value>
+    PUT <ns> <key> VALUE <value> META <json>
+    GET <ns> <key> [VERSION <n>] [META]
+    DELETE <ns> <key>
+    LIST <ns> [PREFIX <prefix>] [CURSOR <cursor>] [LIMIT <n>]
+    VERSIONS <ns> <key> [LIMIT <n>] [FROM <version>]
 
-  Key Management
-    ROTATE <keyspace> [FORCE] [NOWAIT] [DRYRUN]
-    JWKS <keyspace>
-    KEYSTATE <keyspace>
+  Namespace Operations
+    NAMESPACE CREATE <name> [SCHEMA <json>] [MAX_VERSIONS <n>] [TOMBSTONE_RETENTION <secs>]
+    NAMESPACE DROP <name> [FORCE]
+    NAMESPACE LIST [CURSOR <cursor>] [LIMIT <n>]
+    NAMESPACE INFO <name>
+    NAMESPACE ALTER <name> [SCHEMA <json>] [MAX_VERSIONS <n>] [TOMBSTONE_RETENTION <secs>]
+    NAMESPACE VALIDATE <name>
 
   Operational
-    HEALTH [<keyspace>]
-    KEYS <keyspace> [CURSOR <cursor>] [PATTERN <glob>] [STATE <state>] [COUNT <n>]
-    SUSPEND <keyspace> <credential_id>
-    UNSUSPEND <keyspace> <credential_id>
-    SCHEMA <keyspace>
+    AUTH <token>
+    PING
+    HEALTH
+    CONFIG GET <key>
+    CONFIG SET <key> <value>
+    COMMAND LIST
 
   Other
-    help [<command>]   Show help (optionally for a specific command)
-    quit/exit          Disconnect
+    help [<command>]   Show help for a specific command
+    quit / exit        Disconnect
 "#
     );
 }
 
 fn print_command_help(cmd: &str) {
     match cmd.to_uppercase().as_str() {
-        "ISSUE" => println!(
-            r#"ISSUE <keyspace> [CLAIMS <json>] [META <json>] [TTL <secs>] [IDEMPOTENCY_KEY <key>]
+        "PUT" => println!(
+            r#"PUT <namespace> <key> <value>
+PUT <namespace> <key> VALUE <value> META <json>
 
-  Issue a new credential in the given keyspace.
-
-  CLAIMS     JSON object with JWT claims (JWT keyspaces only).
-  META       JSON object with metadata to attach to the credential.
-  TTL        Time-to-live in seconds (overrides keyspace default).
-  IDEMPOTENCY_KEY  Prevents duplicate issuance for the same key within 5 minutes.
+  Store a value at the given key. Auto-increments the version.
 
   Example:
-    ISSUE tokens CLAIMS '{{"sub":"user123"}}' TTL 3600
+    PUT myapp.users user:1 alice
+    PUT myapp.users user:1 VALUE alice META '{{"role":"admin"}}'
 "#
         ),
-        "VERIFY" => println!(
-            r#"VERIFY <keyspace> <token> [PAYLOAD <data>] [CHECKREV]
+        "GET" => println!(
+            r#"GET <namespace> <key> [VERSION <n>] [META]
 
-  Verify a credential (JWT token, API key, or HMAC signature).
+  Retrieve the value at a key. Returns the latest version by default.
 
-  PAYLOAD    For HMAC keyspaces, the original message to verify against.
-  CHECKREV   Also check if the credential has been revoked (slower).
+  VERSION  Fetch a specific version.
+  META     Include metadata in the response.
 
   Example:
-    VERIFY tokens eyJhbGciOi... CHECKREV
+    GET myapp.users user:1
+    GET myapp.users user:1 VERSION 1 META
 "#
         ),
-        "REVOKE" => println!(
-            r#"REVOKE <keyspace> <credential_id>
-REVOKE <keyspace> FAMILY <family_id>
+        "DELETE" => println!(
+            r#"DELETE <namespace> <key>
 
-  Revoke a single credential by ID, or revoke an entire refresh token family.
+  Delete a key by writing a tombstone. The key's version history
+  is preserved and accessible via VERSIONS.
 
   Example:
-    REVOKE tokens cred_abc123
-    REVOKE sessions FAMILY fam_xyz789
+    DELETE myapp.sessions sess:abc
 "#
         ),
-        "REFRESH" => println!(
-            r#"REFRESH <keyspace> <token>
+        "LIST" => println!(
+            r#"LIST <namespace> [PREFIX <prefix>] [CURSOR <cursor>] [LIMIT <n>]
 
-  Exchange a refresh token for a new one (refresh token keyspaces only).
-  The old token is consumed and a new token is returned.
+  List active keys in a namespace. Tombstoned keys are excluded.
 
   Example:
-    REFRESH sessions rt_abc123...
+    LIST myapp.users PREFIX user: LIMIT 50
 "#
         ),
-        "UPDATE" => println!(
-            r#"UPDATE <keyspace> <credential_id> META <json>
+        "VERSIONS" => println!(
+            r#"VERSIONS <namespace> <key> [LIMIT <n>] [FROM <version>]
 
-  Update metadata on an existing credential. Merges with existing metadata.
-  Immutable fields (if defined in meta_schema) cannot be changed.
+  Show version history for a key, including tombstones.
+  Most recent versions first. Does not include values.
 
   Example:
-    UPDATE keys cred_abc123 META '{{"plan":"pro"}}'
+    VERSIONS myapp.users user:1 LIMIT 5
 "#
         ),
-        "INSPECT" => println!(
-            r#"INSPECT <keyspace> <credential_id>
+        "NAMESPACE" => println!(
+            r#"NAMESPACE CREATE <name> [SCHEMA <json>] [MAX_VERSIONS <n>] [TOMBSTONE_RETENTION <secs>]
+NAMESPACE DROP <name> [FORCE]
+NAMESPACE LIST [CURSOR <cursor>] [LIMIT <n>]
+NAMESPACE INFO <name>
+NAMESPACE ALTER <name> [SCHEMA <json>] [MAX_VERSIONS <n>]
+NAMESPACE VALIDATE <name>
 
-  Retrieve full details about a credential including metadata, state, and timestamps.
-
-  Example:
-    INSPECT tokens cred_abc123
-"#
-        ),
-        "ROTATE" => println!(
-            r#"ROTATE <keyspace> [FORCE] [NOWAIT] [DRYRUN]
-
-  Trigger key rotation for the keyspace. The old key enters drain mode.
-
-  FORCE    Rotate even if the current key has not reached its rotation age.
-  NOWAIT   Return immediately without waiting for rotation to complete.
-  DRYRUN   Preview what would happen without making changes.
+  Manage namespaces. CREATE and DROP require admin access.
+  VALIDATE checks existing entries against the current schema.
 
   Example:
-    ROTATE tokens FORCE
-"#
-        ),
-        "JWKS" => println!(
-            r#"JWKS <keyspace>
-
-  Return the JSON Web Key Set for a JWT keyspace. Includes all active
-  and draining public keys.
-
-  Example:
-    JWKS tokens
-"#
-        ),
-        "KEYSTATE" => println!(
-            r#"KEYSTATE <keyspace>
-
-  Show the current key ring state: active key, draining keys, and
-  pre-staged keys with their creation timestamps and status.
-
-  Example:
-    KEYSTATE tokens
-"#
-        ),
-        "HEALTH" => println!(
-            r#"HEALTH [<keyspace>]
-
-  Check server health. Optionally check a specific keyspace.
-  Returns status, engine state, and per-keyspace credential counts.
-
-  Example:
-    HEALTH
-    HEALTH tokens
-"#
-        ),
-        "KEYS" => println!(
-            r#"KEYS <keyspace> [CURSOR <cursor>] [PATTERN <glob>] [STATE <state>] [COUNT <n>]
-
-  List credential IDs in a keyspace with optional filtering and pagination.
-
-  CURSOR   Resume from a previous scan position.
-  PATTERN  Filter by credential ID pattern (glob-style).
-  STATE    Filter by state: active, suspended, revoked.
-  COUNT    Maximum number of results to return (default: 100).
-
-  Example:
-    KEYS tokens COUNT 50
-"#
-        ),
-        "SUSPEND" => println!(
-            r#"SUSPEND <keyspace> <credential_id>
-
-  Temporarily suspend a credential. Suspended credentials fail verification
-  but are not permanently revoked and can be unsuspended.
-
-  Example:
-    SUSPEND tokens cred_abc123
-"#
-        ),
-        "UNSUSPEND" => println!(
-            r#"UNSUSPEND <keyspace> <credential_id>
-
-  Reactivate a previously suspended credential.
-
-  Example:
-    UNSUSPEND tokens cred_abc123
-"#
-        ),
-        "SCHEMA" => println!(
-            r#"SCHEMA <keyspace>
-
-  Display the metadata schema for a keyspace, including field types,
-  required fields, defaults, and validation constraints.
-
-  Example:
-    SCHEMA tokens
+    NAMESPACE CREATE myapp.users
+    NAMESPACE INFO myapp.users
+    NAMESPACE DROP temp FORCE
 "#
         ),
         "AUTH" => println!(
             r#"AUTH <token>
 
-  Authenticate the current connection with a bearer token.
-  Must be called before any other command if auth is enabled.
+  Authenticate the connection. Required before any data command
+  when the server has auth enabled.
 
   Example:
     AUTH my-secret-token
@@ -507,20 +418,22 @@ REVOKE <keyspace> FAMILY <family_id>
             r#"CONFIG GET <key>
 CONFIG SET <key> <value>
 
-  Get or set runtime configuration values.
+  Get or set runtime configuration. CONFIG SET requires admin access.
 
   Example:
     CONFIG GET max_connections
-    CONFIG SET log_level debug
 "#
         ),
-        "SUBSCRIBE" => println!(
-            r#"SUBSCRIBE <channel>
+        "HEALTH" => println!(
+            r#"HEALTH
 
-  Subscribe to real-time event notifications on a channel.
+  Check server health status.
+"#
+        ),
+        "PING" => println!(
+            r#"PING
 
-  Example:
-    SUBSCRIBE keyspace:tokens
+  Test connectivity. Returns PONG.
 "#
         ),
         _ => println!("Unknown command: {cmd}. Type 'help' for all commands."),

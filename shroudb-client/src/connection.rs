@@ -49,7 +49,16 @@ impl Connection {
         let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
         let stream = TcpStream::connect(addr).await?;
 
-        let host = addr.split(':').next().unwrap_or("localhost");
+        let host = if addr.starts_with('[') {
+            // IPv6: [::1]:6399
+            addr.split(']')
+                .next()
+                .unwrap_or("localhost")
+                .trim_start_matches('[')
+        } else {
+            // IPv4 or hostname: 127.0.0.1:6399
+            addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr)
+        };
         let domain = rustls_pki_types::ServerName::try_from(host.to_string())
             .map_err(|e| ClientError::Protocol(format!("invalid server name: {e}")))?;
 
@@ -66,10 +75,16 @@ impl Connection {
     }
 
     /// Send a command (as a list of string arguments) and read the response.
+    ///
+    /// Times out after 30 seconds to prevent hanging on unresponsive servers.
     pub async fn send_command(&mut self, args: &[String]) -> Result<Response, ClientError> {
-        self.write_command(args).await?;
-        self.writer.flush().await?;
-        self.read_response().await
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            self.write_command(args).await?;
+            self.writer.flush().await?;
+            self.read_response().await
+        })
+        .await
+        .map_err(|_| ClientError::Timeout)?
     }
 
     /// Send a command from `&str` slices.

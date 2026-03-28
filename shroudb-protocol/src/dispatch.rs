@@ -1,53 +1,31 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use metrics::{counter, histogram};
 
-use shroudb_storage::{HealthState, StorageEngine};
+use shroudb_acl::AuthContext;
+use shroudb_storage::StorageEngine;
+use shroudb_store::Store;
 
-use crate::auth::{self, AuthPolicy, AuthRegistry};
 use crate::command::Command;
 use crate::error::CommandError;
-use crate::events::{EventBus, LifecycleEvent};
 use crate::handlers;
-use crate::idempotency::IdempotencyMap;
 use crate::response::{CommandResponse, ResponseMap, ResponseValue};
 
-/// Routes parsed commands to the appropriate handler.
-pub struct CommandDispatcher {
+/// Routes parsed commands to handlers, enforcing ACL at the dispatcher level.
+pub struct CommandDispatcher<S: Store> {
+    store: S,
     engine: Arc<StorageEngine>,
-    idempotency: IdempotencyMap,
-    auth_registry: Arc<AuthRegistry>,
-    event_bus: Arc<EventBus>,
 }
 
-impl CommandDispatcher {
-    pub fn new(engine: Arc<StorageEngine>, auth_registry: Arc<AuthRegistry>) -> Self {
-        Self {
-            engine,
-            idempotency: IdempotencyMap::new(Duration::from_secs(300)),
-            auth_registry,
-            event_bus: Arc::new(EventBus::new(1024)),
-        }
+impl<S: Store> CommandDispatcher<S> {
+    pub fn new(store: S, engine: Arc<StorageEngine>) -> Self {
+        Self { store, engine }
     }
 
-    /// Returns a reference to the auth registry.
-    pub fn auth_registry(&self) -> &AuthRegistry {
-        &self.auth_registry
-    }
-
-    /// Returns a reference to the underlying storage engine.
-    pub fn engine(&self) -> &StorageEngine {
-        &self.engine
-    }
-
-    /// Returns a reference to the event bus for subscribing to lifecycle events.
-    pub fn event_bus(&self) -> &Arc<EventBus> {
-        &self.event_bus
-    }
-
-    pub async fn execute(&self, cmd: Command, auth: Option<&AuthPolicy>) -> CommandResponse {
-        // Handle pipeline recursively (boxed to avoid infinite future size)
+    /// Execute a command with the given auth context.
+    pub async fn execute(&self, cmd: Command, auth: Option<&AuthContext>) -> CommandResponse {
+        // Pipeline: execute each sub-command (boxed to avoid infinite future size)
         if let Command::Pipeline(commands) = cmd {
             let mut results = Vec::with_capacity(commands.len());
             for c in commands {
@@ -56,68 +34,29 @@ impl CommandDispatcher {
             return CommandResponse::Array(results);
         }
 
-        // Auth and Health bypass auth checks
-        if !matches!(cmd, Command::Auth { .. } | Command::Health { .. } | Command::Ping | Command::CommandList)
-            && self.auth_registry.is_required()
-        {
-            match auth {
+        // ACL middleware: check before handler runs
+        let requirement = cmd.acl_requirement();
+        match &requirement {
+            shroudb_acl::AclRequirement::None => {}
+            _ => match auth {
                 None => {
-                    return CommandResponse::Error(CommandError::Denied {
-                        reason: "authentication required".into(),
-                    });
+                    return CommandResponse::Error(CommandError::NotAuthenticated);
                 }
-                Some(policy) => {
-                    if let Err(e) = policy.check(&cmd) {
-                        return CommandResponse::Error(e);
-                    }
-                }
-            }
-        }
-
-        // Check engine health (allow Health commands through)
-        if !matches!(cmd, Command::Health { .. } | Command::Ping | Command::CommandList) && self.engine.health() != HealthState::Ready {
-            return CommandResponse::Error(CommandError::NotReady(
-                self.engine.health().to_string(),
-            ));
-        }
-
-        // Look up keyspace if the command has one
-        let keyspace = if let Some(ks_name) = cmd.keyspace() {
-            match self.engine.index().keyspaces.get(ks_name) {
-                Some(ks_ref) => {
-                    let ks = ks_ref.value().clone();
-                    // Check keyspace not disabled (except for Health/Schema/KeyState/Jwks which are read-only)
-                    if ks.disabled && !cmd.is_read() {
-                        return CommandResponse::Error(CommandError::Disabled {
-                            keyspace: ks_name.to_string(),
+                Some(ctx) => {
+                    if let Err(e) = ctx.check(&requirement) {
+                        return CommandResponse::Error(CommandError::Denied {
+                            reason: e.to_string(),
                         });
                     }
-                    Some(ks)
                 }
-                None => {
-                    return CommandResponse::Error(CommandError::NotFound {
-                        entity: "keyspace".into(),
-                        id: ks_name.to_string(),
-                    });
-                }
-            }
-        } else {
-            None
-        };
+            },
+        }
 
-        let verb = auth::command_verb(&cmd);
-        let keyspace_label = cmd.keyspace().unwrap_or("_global").to_string();
+        let verb = cmd.verb();
         let is_write = !cmd.is_read();
-        let is_verify = matches!(cmd, Command::Verify { .. });
-        let behavior = match cmd.replica_behavior() {
-            crate::command::ReplicaBehavior::PureRead => "PureRead",
-            crate::command::ReplicaBehavior::ObservationalRead => "ObservationalRead",
-            crate::command::ReplicaBehavior::ConditionalWrite => "WriteOnly",
-            crate::command::ReplicaBehavior::WriteOnly => "WriteOnly",
-        };
 
         let start = Instant::now();
-        let result = self.dispatch(cmd, keyspace.as_ref()).await;
+        let result = self.dispatch(cmd, auth).await;
         let duration = start.elapsed();
 
         let result_label = match &result {
@@ -125,26 +64,18 @@ impl CommandDispatcher {
             Err(_) => "error",
         };
 
-        counter!("shroudb_commands_total", "command" => verb, "keyspace" => keyspace_label.clone(), "result" => result_label).increment(1);
-        histogram!("shroudb_command_duration_seconds", "command" => verb, "keyspace" => keyspace_label.clone()).record(duration.as_secs_f64());
-
-        // Phase 0 replication metric: command behavior classification
-        counter!("shroudb_commands_by_behavior_total", "behavior" => behavior).increment(1);
-
-        // Phase 0 replication metric: VERIFY rate histogram
-        if is_verify {
-            histogram!("shroudb_verify_rate", "keyspace" => keyspace_label.clone())
-                .record(duration.as_secs_f64());
-        }
+        counter!("shroudb_commands_total", "command" => verb, "result" => result_label)
+            .increment(1);
+        histogram!("shroudb_command_duration_seconds", "command" => verb)
+            .record(duration.as_secs_f64());
 
         if is_write {
             tracing::info!(
                 target: "shroudb::audit",
                 op = verb,
-                keyspace = keyspace_label.as_str(),
                 result = result_label,
                 duration_ms = duration.as_millis() as u64,
-                actor = auth.map(|a| a.name.as_str()).unwrap_or("anonymous"),
+                actor = auth.map(|a| a.actor.as_str()).unwrap_or("anonymous"),
                 "command executed"
             );
         }
@@ -158,356 +89,138 @@ impl CommandDispatcher {
     async fn dispatch(
         &self,
         cmd: Command,
-        keyspace: Option<&shroudb_core::Keyspace>,
+        _auth: Option<&AuthContext>,
     ) -> Result<ResponseMap, CommandError> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        match cmd {
+            // ── Connection ───────────────────────────────────────────
+            Command::Auth { .. } => Err(CommandError::Internal(
+                "AUTH must be handled at the connection level (bug: reached dispatcher)".into(),
+            )),
 
-        // Capture info for lifecycle event publishing before the command is moved.
-        let lifecycle_info = self.lifecycle_info_for(&cmd);
-
-        let result = match cmd {
-            Command::Issue {
-                claims,
-                metadata,
-                ttl_secs,
-                idempotency_key,
-                ..
-            } => {
-                let ks = keyspace.unwrap();
-
-                // Check idempotency
-                if let Some(ref idem_key) = idempotency_key
-                    && let Some(cached) = self.idempotency.check(idem_key).await
-                {
-                    return Ok(cached);
-                }
-
-                let result = handlers::issue::handle_issue(
-                    &self.engine,
-                    ks,
-                    claims,
-                    metadata,
-                    ttl_secs,
-                    idempotency_key.as_deref(),
-                )
-                .await?;
-
-                // Cache idempotency response
-                if let Some(idem_key) = idempotency_key {
-                    self.idempotency.insert(idem_key, result.clone()).await;
-                }
-
-                Ok(result)
+            Command::Ping => {
+                Ok(ResponseMap::ok().with("message", ResponseValue::String("PONG".into())))
             }
 
-            Command::Verify {
-                token,
-                payload,
-                check_revoked,
-                ..
+            // ── Data operations ──────────────────────────────────────
+            Command::Put {
+                ns,
+                key,
+                value,
+                metadata,
+            } => handlers::put::handle(&self.store, &ns, &key, &value, metadata).await,
+
+            Command::Get {
+                ns,
+                key,
+                version,
+                meta,
+            } => handlers::get::handle(&self.store, &ns, &key, version, meta).await,
+
+            Command::Delete { ns, key } => handlers::delete::handle(&self.store, &ns, &key).await,
+
+            Command::List {
+                ns,
+                prefix,
+                cursor,
+                limit,
             } => {
-                let ks = keyspace.unwrap();
-                handlers::verify::handle_verify(
-                    &self.engine,
-                    ks,
-                    &token,
-                    payload.as_deref(),
-                    check_revoked,
+                handlers::list::handle(
+                    &self.store,
+                    &ns,
+                    prefix.as_deref(),
+                    cursor.as_deref(),
+                    limit.unwrap_or(100),
                 )
                 .await
             }
 
-            Command::Revoke {
-                target, ttl_secs, ..
+            Command::Versions {
+                ns,
+                key,
+                limit,
+                from,
             } => {
-                let ks = keyspace.unwrap();
-                handlers::revoke::handle_revoke(&self.engine, ks, &target, ttl_secs).await
+                handlers::versions::handle(&self.store, &ns, &key, limit.unwrap_or(100), from).await
             }
 
-            Command::Refresh { token, .. } => {
-                let ks = keyspace.unwrap();
-                handlers::refresh::handle_refresh(&self.engine, ks, &token).await
-            }
-
-            Command::Update {
-                credential_id,
-                metadata,
-                ..
+            // ── Namespace operations ─────────────────────────────────
+            Command::NamespaceCreate {
+                name,
+                schema,
+                max_versions,
+                tombstone_retention_secs,
             } => {
-                let ks = keyspace.unwrap();
-                handlers::update::handle_update(&self.engine, ks, &credential_id, metadata).await
+                handlers::namespace::handle_create(
+                    &self.store,
+                    &name,
+                    schema,
+                    max_versions,
+                    tombstone_retention_secs,
+                )
+                .await
             }
 
-            Command::Inspect { credential_id, .. } => {
-                let ks = keyspace.unwrap();
-                handlers::inspect::handle_inspect(&self.engine, ks, &credential_id).await
+            Command::NamespaceDrop { name, force } => {
+                handlers::namespace::handle_drop(&self.store, &name, force).await
             }
 
-            Command::Rotate { force, dryrun, .. } => {
-                let ks = keyspace.unwrap();
-                handlers::rotate::handle_rotate(&self.engine, ks, force, dryrun).await
+            Command::NamespaceList { cursor, limit } => {
+                handlers::namespace::handle_list(
+                    &self.store,
+                    cursor.as_deref(),
+                    limit.unwrap_or(100),
+                )
+                .await
             }
 
-            Command::Jwks { .. } => {
-                let ks = keyspace.unwrap();
-                handlers::jwks::handle_jwks(&self.engine, ks).await
+            Command::NamespaceInfo { name } => {
+                handlers::namespace::handle_info(&self.store, &name).await
             }
 
-            Command::KeyState { .. } => {
-                let ks = keyspace.unwrap();
-                handlers::keystate::handle_keystate(&self.engine, ks).await
-            }
-
-            Command::Health {
-                keyspace: ks_name, ..
-            } => handlers::health::handle_health(&self.engine, ks_name.as_deref()).await,
-
-            Command::Keys {
-                cursor,
-                pattern,
-                state_filter,
-                count,
-                ..
+            Command::NamespaceAlter {
+                name,
+                schema,
+                max_versions,
+                tombstone_retention_secs,
             } => {
-                let ks = keyspace.unwrap();
-                let params = handlers::keys::KeysParams {
-                    cursor,
-                    pattern,
-                    state_filter,
-                    count,
-                };
-                handlers::keys::handle_keys(&self.engine, ks, &params).await
+                handlers::namespace::handle_alter(
+                    &self.store,
+                    &name,
+                    schema,
+                    max_versions,
+                    tombstone_retention_secs,
+                )
+                .await
             }
 
-            Command::Suspend { credential_id, .. } => {
-                let ks = keyspace.unwrap();
-                handlers::suspend::handle_suspend(&self.engine, ks, &credential_id).await
+            Command::NamespaceValidate { name } => {
+                handlers::namespace::handle_validate(&self.store, &name).await
             }
 
-            Command::Unsuspend { credential_id, .. } => {
-                let ks = keyspace.unwrap();
-                handlers::suspend::handle_unsuspend(&self.engine, ks, &credential_id).await
-            }
-
-            Command::Schema { .. } => {
-                let ks = keyspace.unwrap();
-                handlers::schema::handle_schema(ks).await
-            }
+            // ── Operational ──────────────────────────────────────────
+            Command::Health => handlers::health::handle().await,
 
             Command::ConfigGet { key } => {
-                handlers::config::handle_config_get(&self.engine, &key).await
+                handlers::config::handle_get(self.engine.config_store(), &key).await
             }
 
             Command::ConfigSet { key, value } => {
-                handlers::config::handle_config_set(&self.engine, &key, &value).await
+                handlers::config::handle_set(&self.engine, &key, &value).await
             }
 
-            Command::ConfigList => handlers::config::handle_config_list(&self.engine).await,
+            Command::CommandList => handlers::command_list::handle().await,
 
-            Command::KeyspaceCreate {
-                name,
-                keyspace_type,
-                algorithm,
-                rotation_days,
-                drain_days,
-                default_ttl_secs,
-            } => {
-                handlers::keyspace_create::handle_keyspace_create(
-                    &self.engine,
-                    &name,
-                    &keyspace_type,
-                    algorithm.as_deref(),
-                    rotation_days,
-                    drain_days,
-                    default_ttl_secs,
-                )
-                .await
-            }
+            // ── Streaming ────────────────────────────────────────────
+            Command::Subscribe { .. } => Err(CommandError::BadArg {
+                message: "SUBSCRIBE must be handled at the connection level".into(),
+            }),
 
-            Command::Subscribe { .. } => {
-                // SUBSCRIBE is handled at the connection level; reaching here means
-                // it was dispatched in a context that doesn't support streaming.
-                Err(CommandError::BadArg {
-                    message: "SUBSCRIBE is only supported on persistent TCP connections".into(),
-                })
-            }
+            Command::Unsubscribe => Err(CommandError::BadArg {
+                message: "UNSUBSCRIBE: no active subscription".into(),
+            }),
 
-            Command::PasswordSet {
-                user_id,
-                plaintext,
-                metadata,
-                ..
-            } => {
-                let ks = keyspace.unwrap();
-                handlers::password::handle_password_set(
-                    &self.engine,
-                    ks,
-                    &user_id,
-                    &plaintext,
-                    metadata,
-                )
-                .await
-            }
-
-            Command::PasswordVerify {
-                user_id, plaintext, ..
-            } => {
-                let ks = keyspace.unwrap();
-                handlers::password::handle_password_verify(&self.engine, ks, &user_id, &plaintext)
-                    .await
-            }
-
-            Command::PasswordChange {
-                user_id,
-                old_plaintext,
-                new_plaintext,
-                ..
-            } => {
-                let ks = keyspace.unwrap();
-                handlers::password::handle_password_change(
-                    &self.engine,
-                    ks,
-                    &user_id,
-                    &old_plaintext,
-                    &new_plaintext,
-                )
-                .await
-            }
-
-            Command::PasswordReset {
-                user_id,
-                new_plaintext,
-                ..
-            } => {
-                let ks = keyspace.unwrap();
-                handlers::password::handle_password_reset(
-                    &self.engine,
-                    ks,
-                    &user_id,
-                    &new_plaintext,
-                )
-                .await
-            }
-
-            Command::PasswordImport {
-                user_id,
-                hash,
-                metadata,
-                ..
-            } => {
-                let ks = keyspace.unwrap();
-                handlers::password::handle_password_import(
-                    &self.engine,
-                    ks,
-                    &user_id,
-                    &hash,
-                    metadata,
-                )
-                .await
-            }
-
-            Command::Auth { .. } => {
-                // AUTH is handled at the connection/request level, not here
-                Ok(ResponseMap::ok().with(
-                    "message",
-                    ResponseValue::String("use AUTH at connection level".into()),
-                ))
-            }
-
-            Command::Ping => Ok(ResponseMap::ok().with("message", ResponseValue::String("PONG".into()))),
-
-            Command::CommandList => {
-                let commands = vec![
-                    "ISSUE", "VERIFY", "REVOKE", "REFRESH", "UPDATE", "INSPECT",
-                    "ROTATE", "JWKS", "KEYSTATE", "HEALTH", "KEYS", "SUSPEND",
-                    "UNSUSPEND", "SCHEMA", "CONFIG", "SUBSCRIBE", "PASSWORD",
-                    "KEYSPACE_CREATE", "AUTH", "PING", "COMMAND",
-                ];
-                let values: Vec<ResponseValue> = commands
-                    .into_iter()
-                    .map(|c| ResponseValue::String(c.into()))
-                    .collect();
-                Ok(ResponseMap::ok()
-                    .with("count", ResponseValue::Integer(values.len() as i64))
-                    .with("commands", ResponseValue::Array(values)))
-            }
-
-            Command::Pipeline(_) => unreachable!("pipeline handled above"),
-        };
-
-        // Publish lifecycle events for successful write commands.
-        if result.is_ok()
-            && let Some((event_type, ks_name, detail)) = lifecycle_info
-        {
-            self.event_bus.publish(LifecycleEvent {
-                event_type,
-                keyspace: ks_name,
-                detail,
-                timestamp: now,
-            });
+            // Pipeline handled above
+            Command::Pipeline(_) => unreachable!("pipeline handled in execute()"),
         }
-
-        // Publish reuse_detected on the error path (ReuseDetected is an error).
-        if let Err(CommandError::ReuseDetected { ref family_id }) = result {
-            let ks_name = keyspace.map(|ks| ks.name.clone()).unwrap_or_default();
-            self.event_bus.publish(LifecycleEvent {
-                event_type: "reuse_detected".into(),
-                keyspace: ks_name,
-                detail: family_id.clone(),
-                timestamp: now,
-            });
-        }
-
-        result
-    }
-
-    /// Extract lifecycle event info from a command before it is consumed.
-    fn lifecycle_info_for(&self, cmd: &Command) -> Option<(String, String, String)> {
-        match cmd {
-            Command::Revoke {
-                keyspace, target, ..
-            } => {
-                let detail = match target {
-                    crate::command::RevokeTarget::Single(id) => id.clone(),
-                    crate::command::RevokeTarget::Family(fam) => fam.clone(),
-                    crate::command::RevokeTarget::Bulk(ids) => {
-                        format!("{} credentials", ids.len())
-                    }
-                };
-                let event_type = match target {
-                    crate::command::RevokeTarget::Family(_) => "family_revoked".to_string(),
-                    _ => "revocation".to_string(),
-                };
-                Some((event_type, keyspace.clone(), detail))
-            }
-            Command::Rotate { keyspace, .. } => {
-                Some(("rotation".into(), keyspace.clone(), String::new()))
-            }
-            Command::PasswordSet {
-                keyspace, user_id, ..
-            } => Some(("password_set".into(), keyspace.clone(), user_id.clone())),
-            Command::PasswordChange {
-                keyspace, user_id, ..
-            } => Some(("password_changed".into(), keyspace.clone(), user_id.clone())),
-            Command::PasswordReset {
-                keyspace, user_id, ..
-            } => Some(("password_reset".into(), keyspace.clone(), user_id.clone())),
-            Command::PasswordImport {
-                keyspace, user_id, ..
-            } => Some((
-                "password_imported".into(),
-                keyspace.clone(),
-                user_id.clone(),
-            )),
-            _ => None,
-        }
-    }
-
-    /// Prune expired idempotency entries. Called by the background reaper.
-    pub async fn prune_idempotency(&self) -> usize {
-        self.idempotency.prune_expired().await
     }
 }

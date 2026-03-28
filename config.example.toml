@@ -1,99 +1,51 @@
 # ShrouDB Configuration
+#
 # Copy to config.toml and adjust for your deployment.
-
-# Master key source (choose one)
-# master_key_source = "env"           # reads SHROUDB_MASTER_KEY
-# master_key_source = "file"          # reads SHROUDB_MASTER_KEY_FILE
-# master_key_source = "aws-kms"       # envelope decryption via AWS KMS
-# master_key_source = "gcp-kms"       # envelope decryption via GCP KMS
+#
+# Master key: set SHROUDB_MASTER_KEY (hex) or SHROUDB_MASTER_KEY_FILE (path)
+# as environment variables. Never put the master key in this file.
+#
+# Precedence: CLI flag > env var > this file > defaults
+# See `shroudb --help` for CLI flags.
 
 [server]
 bind = "0.0.0.0:6399"
-# tls_cert = "/path/to/cert.pem"
-# tls_key = "/path/to/key.pem"
-# tls_client_ca = "/path/to/ca.pem"  # Enable mTLS (require client certificates)
+# tls_cert = "/etc/shroudb/tls/cert.pem"
+# tls_key = "/etc/shroudb/tls/key.pem"
+# tls_client_ca = "/etc/shroudb/tls/ca.pem"   # mTLS
 # unix_socket = "/var/run/shroudb.sock"
-
-# Prometheus metrics scrape endpoint (default 0.0.0.0:9090).
-# Set to disable with: metrics_bind = false
-metrics_bind = "0.0.0.0:9090"
+# rate_limit_per_second = 10000
+# metrics_bind = "0.0.0.0:9090"
 
 [storage]
 data_dir = "./data"
-# WAL fsync mode: "per_write" | "batched" | "periodic"
-wal_fsync_mode = "batched"
-wal_fsync_interval_ms = 10
-wal_segment_max_bytes = 67_108_864  # 64 MiB
-snapshot_interval_entries = 100_000
-snapshot_interval_minutes = 60
+# fsync_mode = "batched"          # per_write | batched | periodic
+# fsync_interval_ms = 10          # for batched/periodic modes
+# max_segment_bytes = 67108864    # 64 MiB
+# max_segment_entries = 100000
+# snapshot_interval_entries = 100000
+# snapshot_interval_minutes = 60
 
-# --- Keyspace Definitions ---
-
-# JWT signing keyspace
-[keyspaces.auth-tokens]
-type = "jwt"
-algorithm = "ES256"                # ES256, ES384, RS256, RS384, RS512, EdDSA
-rotation_days = 90
-drain_days = 30
-pre_stage_days = 7
-default_ttl = "15m"
-# required_claims = { aud = "my-service" }
-# verify_cache_ttl = "30s"
-
-# API key keyspace
-[keyspaces.service-keys]
-type = "api_key"
-prefix = "sk"                      # keys will look like sk_<base62>
-hash_algorithm = "sha256"
-# disabled = true  # soft-disable: rejects commands but retains data
-
-# Optional metadata schema — validates metadata on ISSUE and UPDATE
-# [keyspaces.service-keys.meta_schema]
-# enforce = true
+# --- Authentication ---
 #
-# [keyspaces.service-keys.meta_schema.fields.org_id]
-# type = "string"
-# required = true
-# immutable = true
+# When auth.method = "token", clients must AUTH with a configured token
+# before any command except PING is accepted.
 #
-# [keyspaces.service-keys.meta_schema.fields.plan]
-# type = "string"
-# required = true
-# enum = ["free", "pro", "enterprise"]
-
-# HMAC signing keyspace
-[keyspaces.webhooks]
-type = "hmac"
-algorithm = "sha256"               # sha256, sha384, sha512
-rotation_days = 180
-drain_days = 14
-
-# Refresh token keyspace
-[keyspaces.sessions]
-type = "refresh_token"
-token_ttl = "30d"
-max_chain_length = 100
-family_ttl = "90d"
-
-# Password keyspace
-[keyspaces.users]
-type = "password"
-algorithm = "argon2id"
-max_failed_attempts = 5
-lockout_duration = "15m"
-
-# --- Access Control ---
-# Uncomment to require authentication. Without this section, all connections are allowed.
+# Each token defines a tenant, actor (audit identity), and namespace grants.
+# Platform tokens have unrestricted access across tenants.
 
 # [auth]
-# method = "token"       # "token" or "none"
+# method = "token"
 #
-# [auth.policies.admin]
-# token = "${SHROUDB_ADMIN_TOKEN}"
-# keyspaces = ["*"]
-# commands = ["*"]
+# [auth.tokens.my-app-token]
+# tenant = "tenant-a"
+# actor = "my-app"
+# grants = [
+#     { namespace = "app.users", scopes = ["read", "write"] },
+#     { namespace = "app.sessions", scopes = ["read", "write"] },
+# ]
 #
-# [auth.policies.reader]
-# token = "${SHROUDB_READER_TOKEN}"
-# keyspaces = ["auth-tokens", "service-keys"]
-# commands = ["VERIFY", "INSPECT", "JWKS", "HEALTH", "KEYS"]
+# [auth.tokens.admin-token]
+# tenant = "platform"
+# actor = "admin"
+# platform = true    # unrestricted access, cross-tenant capable

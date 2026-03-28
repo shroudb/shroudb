@@ -3,10 +3,9 @@ services:
     image: ghcr.io/shroudb/shroudb:latest
     ports:
       - "6399:6399"
-      - "9090:9090"
     environment:
       - SHROUDB_MASTER_KEY=${SHROUDB_MASTER_KEY:?Set SHROUDB_MASTER_KEY (64 hex chars)}
-      - LOG_LEVEL=info
+      - SHROUDB_LOG_LEVEL=info
     volumes:
       - shroudb-data:/data
       - ./config.example.toml:/config.toml:ro

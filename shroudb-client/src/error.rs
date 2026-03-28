@@ -26,4 +26,8 @@ pub enum ClientError {
     /// The server returned an unexpected response format.
     #[error("unexpected response format: {0}")]
     ResponseFormat(String),
+
+    /// Operation timed out waiting for server response.
+    #[error("operation timed out")]
+    Timeout,
 }

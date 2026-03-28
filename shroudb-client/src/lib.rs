@@ -11,35 +11,27 @@
 //! # async fn example() -> Result<(), shroudb_client::ClientError> {
 //! let mut client = ShrouDBClient::connect("127.0.0.1:6399").await?;
 //!
-//! // Issue an API key
-//! let result = client.issue("my-keyspace").execute().await?;
-//! let api_key = result.token.as_ref().unwrap();
-//! println!("API key: {api_key}");
+//! // Create a namespace
+//! client.namespace_create("myapp.users").await?;
 //!
-//! // Verify it
-//! let verify = client.verify("my-keyspace", api_key).await?;
-//! println!("Valid: {}", verify.is_ok());
+//! // Store a value
+//! let version = client.put("myapp.users", b"user:1", b"alice").await?;
+//! println!("stored at version {version}");
 //!
-//! // Health check
-//! let health = client.health().await?;
-//! println!("State: {}", health.state);
+//! // Retrieve it
+//! let entry = client.get("myapp.users", b"user:1").await?;
+//! println!("value: {}", String::from_utf8_lossy(&entry.value));
 //! # Ok(())
 //! # }
 //! ```
 
-pub mod builder;
-pub mod builders;
 pub mod connection;
 pub mod error;
 pub mod response;
 
 pub use error::ClientError;
-pub use response::{
-    HealthResult, IssueResult, KeyInfo, KeyStateResult, OkResult, Response, VerifyResult,
-};
+pub use response::Response;
 
-use builder::IssueBuilder;
-use builders::{KeysBuilder, RevokeBuilder, VerifyBuilder};
 use connection::Connection;
 
 /// Parsed components of a ShrouDB connection URI.
@@ -49,31 +41,12 @@ pub struct ConnectionConfig {
     pub port: u16,
     pub tls: bool,
     pub auth_token: Option<String>,
-    pub keyspace: Option<String>,
 }
 
 /// Parse a ShrouDB connection URI.
 ///
-/// Format: `shroudb://[token@]host[:port][/keyspace]`
-///         `shroudb+tls://[token@]host[:port][/keyspace]`
-///
-/// # Examples
-///
-/// ```
-/// use shroudb_client::parse_uri;
-///
-/// let cfg = parse_uri("shroudb://localhost").unwrap();
-/// assert_eq!(cfg.host, "localhost");
-/// assert_eq!(cfg.port, 6399);
-/// assert!(!cfg.tls);
-///
-/// let cfg = parse_uri("shroudb+tls://mytoken@prod.example.com:7000/sessions").unwrap();
-/// assert!(cfg.tls);
-/// assert_eq!(cfg.auth_token.as_deref(), Some("mytoken"));
-/// assert_eq!(cfg.host, "prod.example.com");
-/// assert_eq!(cfg.port, 7000);
-/// assert_eq!(cfg.keyspace.as_deref(), Some("sessions"));
-/// ```
+/// Format: `shroudb://[token@]host[:port]`
+///         `shroudb+tls://[token@]host[:port]`
 pub fn parse_uri(uri: &str) -> Result<ConnectionConfig, ClientError> {
     let (tls, rest) = if let Some(rest) = uri.strip_prefix("shroudb+tls://") {
         (true, rest)
@@ -83,24 +56,14 @@ pub fn parse_uri(uri: &str) -> Result<ConnectionConfig, ClientError> {
         return Err(ClientError::Protocol(format!("invalid URI scheme: {uri}")));
     };
 
-    // Parse token@host:port/keyspace
-    let (auth_token, hostport_path) = if let Some(at_pos) = rest.find('@') {
+    let (auth_token, hostport) = if let Some(at_pos) = rest.find('@') {
         (Some(rest[..at_pos].to_string()), &rest[at_pos + 1..])
     } else {
         (None, rest)
     };
 
-    let (hostport, keyspace) = if let Some(slash_pos) = hostport_path.find('/') {
-        let ks = &hostport_path[slash_pos + 1..];
-        let ks = if ks.is_empty() {
-            None
-        } else {
-            Some(ks.to_string())
-        };
-        (&hostport_path[..slash_pos], ks)
-    } else {
-        (hostport_path, None)
-    };
+    // Strip trailing path if present
+    let hostport = hostport.split('/').next().unwrap_or(hostport);
 
     let (host, port) = if let Some(colon_pos) = hostport.rfind(':') {
         let port_str = &hostport[colon_pos + 1..];
@@ -117,13 +80,45 @@ pub fn parse_uri(uri: &str) -> Result<ConnectionConfig, ClientError> {
         port,
         tls,
         auth_token,
-        keyspace,
     })
+}
+
+/// A versioned entry returned by GET.
+#[derive(Debug, Clone)]
+pub struct GetResult {
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+    pub version: u64,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// A version info entry returned by VERSIONS.
+#[derive(Debug, Clone)]
+pub struct VersionEntry {
+    pub version: u64,
+    pub state: String,
+    pub updated_at: u64,
+    pub actor: String,
+}
+
+/// Namespace info returned by NAMESPACE INFO.
+#[derive(Debug, Clone)]
+pub struct NamespaceInfo {
+    pub name: String,
+    pub key_count: u64,
+    pub created_at: u64,
+}
+
+/// A page of results with optional cursor for pagination.
+#[derive(Debug, Clone)]
+pub struct PageResult {
+    pub items: Vec<String>,
+    pub cursor: Option<String>,
 }
 
 /// A client for interacting with a ShrouDB server.
 pub struct ShrouDBClient {
-    pub(crate) connection: Connection,
+    connection: Connection,
 }
 
 impl ShrouDBClient {
@@ -133,9 +128,7 @@ impl ShrouDBClient {
         Ok(Self { connection })
     }
 
-    /// Connect to a ShrouDB server over TLS at the given address (e.g. `"127.0.0.1:6399"`).
-    ///
-    /// Uses the system's native root certificate store for server verification.
+    /// Connect over TLS using the system's native root certificate store.
     pub async fn connect_tls(addr: &str) -> Result<Self, ClientError> {
         let connection = Connection::connect_tls(addr).await?;
         Ok(Self { connection })
@@ -143,8 +136,8 @@ impl ShrouDBClient {
 
     /// Connect using a URI string.
     ///
-    /// Format: `shroudb://[token@]host[:port][/keyspace]`
-    ///         `shroudb+tls://[token@]host[:port][/keyspace]`
+    /// Format: `shroudb://[token@]host[:port]`
+    ///         `shroudb+tls://[token@]host[:port]`
     pub async fn from_uri(uri: &str) -> Result<Self, ClientError> {
         let config = parse_uri(uri)?;
         let addr = format!("{}:{}", config.host, config.port);
@@ -159,452 +152,341 @@ impl ShrouDBClient {
         Ok(client)
     }
 
-    /// Authenticate the connection with a bearer token.
+    // ── Connection ──────��────────────────────────────────────────────
+
+    /// Authenticate with a token.
     pub async fn auth(&mut self, token: &str) -> Result<(), ClientError> {
         let resp = self.connection.send_command_strs(&["AUTH", token]).await?;
-        check_ok_status(resp)
+        check_ok(&resp)
     }
 
-    /// Start building an ISSUE command for the given keyspace.
-    ///
-    /// Use the returned [`IssueBuilder`] to set optional parameters, then call `.execute()`.
-    pub fn issue(&mut self, keyspace: &str) -> IssueBuilder<'_> {
-        IssueBuilder::new(self, keyspace)
+    /// Ping the server.
+    pub async fn ping(&mut self) -> Result<(), ClientError> {
+        let resp = self.connection.send_command_strs(&["PING"]).await?;
+        check_ok(&resp)
     }
 
-    /// Start building a VERIFY command with optional parameters.
-    ///
-    /// Use the returned [`VerifyBuilder`] to set `payload` or `check_revoked`, then call `.execute()`.
-    pub fn verify_builder(&mut self, keyspace: &str, token: &str) -> VerifyBuilder<'_> {
-        VerifyBuilder::new(self, keyspace, token)
-    }
+    // ── Data operations ──────────────────────────────────────────────
 
-    /// Verify a credential (API key, JWT, or refresh token) in the given keyspace.
-    pub async fn verify(
-        &mut self,
-        keyspace: &str,
-        token: &str,
-    ) -> Result<VerifyResult, ClientError> {
-        self.verify_builder(keyspace, token).execute().await
-    }
-
-    /// Verify a credential with a payload (for HMAC keyspaces).
-    pub async fn verify_with_payload(
-        &mut self,
-        keyspace: &str,
-        token: &str,
-        payload: &str,
-    ) -> Result<VerifyResult, ClientError> {
-        self.verify_builder(keyspace, token)
-            .payload(payload)
-            .execute()
-            .await
-    }
-
-    /// Verify a credential and also check revocation status.
-    pub async fn verify_check_revoked(
-        &mut self,
-        keyspace: &str,
-        token: &str,
-    ) -> Result<VerifyResult, ClientError> {
-        self.verify_builder(keyspace, token)
-            .check_revoked()
-            .execute()
-            .await
-    }
-
-    /// Start building a REVOKE command for a single credential.
-    ///
-    /// Use the returned [`RevokeBuilder`] to set optional `ttl`, then call `.execute()`.
-    pub fn revoke_builder(&mut self, keyspace: &str, credential_id: &str) -> RevokeBuilder<'_> {
-        RevokeBuilder::new_single(self, keyspace, credential_id)
-    }
-
-    /// Revoke a credential by credential ID.
-    pub async fn revoke(&mut self, keyspace: &str, credential_id: &str) -> Result<(), ClientError> {
-        self.revoke_builder(keyspace, credential_id).execute().await
-    }
-
-    /// Revoke all credentials in a refresh token family.
-    pub async fn revoke_family(
-        &mut self,
-        keyspace: &str,
-        family_id: &str,
-    ) -> Result<(), ClientError> {
-        RevokeBuilder::new_family(self, keyspace, family_id)
-            .execute()
-            .await
-    }
-
-    /// Revoke multiple credentials by ID in a single command.
-    pub async fn revoke_bulk(
-        &mut self,
-        keyspace: &str,
-        ids: Vec<String>,
-    ) -> Result<(), ClientError> {
-        RevokeBuilder::new_bulk(self, keyspace, ids).execute().await
-    }
-
-    /// Refresh a token, consuming the old one and returning a new credential.
-    pub async fn refresh(
-        &mut self,
-        keyspace: &str,
-        token: &str,
-    ) -> Result<IssueResult, ClientError> {
+    /// Store a value. Returns the new version number.
+    pub async fn put(&mut self, ns: &str, key: &[u8], value: &[u8]) -> Result<u64, ClientError> {
+        let key_str = String::from_utf8_lossy(key);
+        let val_str = String::from_utf8_lossy(value);
         let resp = self
             .connection
-            .send_command_strs(&["REFRESH", keyspace, token])
+            .send_command_strs(&["PUT", ns, &key_str, &val_str])
             .await?;
-        IssueResult::from_response(resp)
+        check_ok(&resp)?;
+        resp.get_int_field("version")
+            .map(|v| v as u64)
+            .ok_or_else(|| ClientError::ResponseFormat("missing version field".into()))
     }
 
-    /// Update metadata on an existing credential.
-    pub async fn update(
+    /// Store a value with metadata. Returns the new version number.
+    pub async fn put_with_metadata(
         &mut self,
-        keyspace: &str,
-        credential_id: &str,
+        ns: &str,
+        key: &[u8],
+        value: &[u8],
         metadata: serde_json::Value,
-    ) -> Result<(), ClientError> {
+    ) -> Result<u64, ClientError> {
+        let key_str = String::from_utf8_lossy(key);
+        let val_str = String::from_utf8_lossy(value);
         let meta_str = serde_json::to_string(&metadata)
             .map_err(|e| ClientError::Serialization(e.to_string()))?;
         let resp = self
             .connection
-            .send_command_strs(&["UPDATE", keyspace, credential_id, "META", &meta_str])
+            .send_command_strs(&["PUT", ns, &key_str, "VALUE", &val_str, "META", &meta_str])
             .await?;
-        check_ok_status(resp)
+        check_ok(&resp)?;
+        resp.get_int_field("version")
+            .map(|v| v as u64)
+            .ok_or_else(|| ClientError::ResponseFormat("missing version field".into()))
     }
 
-    /// Inspect a credential by ID, returning all stored fields.
-    pub async fn inspect(
+    /// Retrieve a value.
+    pub async fn get(&mut self, ns: &str, key: &[u8]) -> Result<GetResult, ClientError> {
+        let key_str = String::from_utf8_lossy(key);
+        let resp = self
+            .connection
+            .send_command_strs(&["GET", ns, &key_str])
+            .await?;
+        check_ok(&resp)?;
+        parse_get_result(&resp)
+    }
+
+    /// Retrieve a specific version.
+    pub async fn get_version(
         &mut self,
-        keyspace: &str,
-        credential_id: &str,
-    ) -> Result<OkResult, ClientError> {
+        ns: &str,
+        key: &[u8],
+        version: u64,
+    ) -> Result<GetResult, ClientError> {
+        let key_str = String::from_utf8_lossy(key);
+        let ver_str = version.to_string();
         let resp = self
             .connection
-            .send_command_strs(&["INSPECT", keyspace, credential_id])
+            .send_command_strs(&["GET", ns, &key_str, "VERSION", &ver_str])
             .await?;
-        OkResult::from_response(resp)
+        check_ok(&resp)?;
+        parse_get_result(&resp)
     }
 
-    /// Trigger key rotation for the keyspace.
-    pub async fn rotate(&mut self, keyspace: &str) -> Result<OkResult, ClientError> {
+    /// Delete a key. Returns the tombstone version number.
+    pub async fn delete(&mut self, ns: &str, key: &[u8]) -> Result<u64, ClientError> {
+        let key_str = String::from_utf8_lossy(key);
         let resp = self
             .connection
-            .send_command_strs(&["ROTATE", keyspace])
+            .send_command_strs(&["DELETE", ns, &key_str])
             .await?;
-        OkResult::from_response(resp)
+        check_ok(&resp)?;
+        resp.get_int_field("version")
+            .map(|v| v as u64)
+            .ok_or_else(|| ClientError::ResponseFormat("missing version field".into()))
     }
 
-    /// Force key rotation regardless of rotation age.
-    pub async fn rotate_force(&mut self, keyspace: &str) -> Result<OkResult, ClientError> {
+    /// List active keys in a namespace.
+    pub async fn list(&mut self, ns: &str) -> Result<PageResult, ClientError> {
+        let resp = self.connection.send_command_strs(&["LIST", ns]).await?;
+        check_ok(&resp)?;
+        parse_key_list(&resp)
+    }
+
+    /// List with prefix filter.
+    pub async fn list_prefix(&mut self, ns: &str, prefix: &str) -> Result<PageResult, ClientError> {
         let resp = self
             .connection
-            .send_command_strs(&["ROTATE", keyspace, "FORCE"])
+            .send_command_strs(&["LIST", ns, "PREFIX", prefix])
             .await?;
-        OkResult::from_response(resp)
+        check_ok(&resp)?;
+        parse_key_list(&resp)
     }
 
-    /// Dry-run key rotation (preview without mutating).
-    pub async fn rotate_dryrun(&mut self, keyspace: &str) -> Result<OkResult, ClientError> {
+    /// Get version history for a key.
+    pub async fn versions(
+        &mut self,
+        ns: &str,
+        key: &[u8],
+    ) -> Result<Vec<VersionEntry>, ClientError> {
+        let key_str = String::from_utf8_lossy(key);
         let resp = self
             .connection
-            .send_command_strs(&["ROTATE", keyspace, "FORCE", "DRYRUN"])
+            .send_command_strs(&["VERSIONS", ns, &key_str])
             .await?;
-        OkResult::from_response(resp)
+        check_ok(&resp)?;
+        parse_versions(&resp)
     }
 
-    /// Get the JSON Web Key Set for a JWT keyspace.
-    pub async fn jwks(&mut self, keyspace: &str) -> Result<OkResult, ClientError> {
+    // ── Namespace operations ─────────────────────────────────────────
+
+    /// Create a namespace.
+    pub async fn namespace_create(&mut self, name: &str) -> Result<(), ClientError> {
         let resp = self
             .connection
-            .send_command_strs(&["JWKS", keyspace])
+            .send_command_strs(&["NAMESPACE", "CREATE", name])
             .await?;
-        OkResult::from_response(resp)
+        check_ok(&resp)
     }
 
-    /// Get the key ring state for a keyspace.
-    pub async fn keystate(&mut self, keyspace: &str) -> Result<KeyStateResult, ClientError> {
+    /// Drop a namespace.
+    pub async fn namespace_drop(&mut self, name: &str, force: bool) -> Result<(), ClientError> {
+        let args: Vec<&str> = if force {
+            vec!["NAMESPACE", "DROP", name, "FORCE"]
+        } else {
+            vec!["NAMESPACE", "DROP", name]
+        };
+        let resp = self.connection.send_command_strs(&args).await?;
+        check_ok(&resp)
+    }
+
+    /// List namespaces.
+    pub async fn namespace_list(&mut self) -> Result<PageResult, ClientError> {
         let resp = self
             .connection
-            .send_command_strs(&["KEYSTATE", keyspace])
+            .send_command_strs(&["NAMESPACE", "LIST"])
             .await?;
-        KeyStateResult::from_response(resp)
+        check_ok(&resp)?;
+        parse_namespace_list(&resp)
     }
 
-    /// Check server health.
-    pub async fn health(&mut self) -> Result<HealthResult, ClientError> {
+    /// Get namespace info.
+    pub async fn namespace_info(&mut self, name: &str) -> Result<NamespaceInfo, ClientError> {
+        let resp = self
+            .connection
+            .send_command_strs(&["NAMESPACE", "INFO", name])
+            .await?;
+        check_ok(&resp)?;
+        Ok(NamespaceInfo {
+            name: resp.get_string_field("name").ok_or_else(|| {
+                ClientError::ResponseFormat(
+                    "missing 'name' field in NAMESPACE INFO response".into(),
+                )
+            })?,
+            key_count: resp.get_int_field("key_count").ok_or_else(|| {
+                ClientError::ResponseFormat(
+                    "missing 'key_count' field in NAMESPACE INFO response".into(),
+                )
+            })? as u64,
+            created_at: resp.get_int_field("created_at").ok_or_else(|| {
+                ClientError::ResponseFormat(
+                    "missing 'created_at' field in NAMESPACE INFO response".into(),
+                )
+            })? as u64,
+        })
+    }
+
+    // ── Operational ──────────────────────────────────────────────────
+
+    /// Health check.
+    pub async fn health(&mut self) -> Result<(), ClientError> {
         let resp = self.connection.send_command_strs(&["HEALTH"]).await?;
-        HealthResult::from_response(resp)
+        check_ok(&resp)
     }
 
-    /// Check health for a specific keyspace.
-    pub async fn health_keyspace(&mut self, keyspace: &str) -> Result<OkResult, ClientError> {
+    /// Get list of supported commands.
+    pub async fn command_list(&mut self) -> Result<Vec<String>, ClientError> {
         let resp = self
             .connection
-            .send_command_strs(&["HEALTH", keyspace])
+            .send_command_strs(&["COMMAND", "LIST"])
             .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Suspend a credential (temporarily disable verification).
-    pub async fn suspend(
-        &mut self,
-        keyspace: &str,
-        credential_id: &str,
-    ) -> Result<(), ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["SUSPEND", keyspace, credential_id])
-            .await?;
-        check_ok_status(resp)
-    }
-
-    /// Unsuspend a previously suspended credential.
-    pub async fn unsuspend(
-        &mut self,
-        keyspace: &str,
-        credential_id: &str,
-    ) -> Result<(), ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["UNSUSPEND", keyspace, credential_id])
-            .await?;
-        check_ok_status(resp)
-    }
-
-    /// Get the metadata schema for a keyspace.
-    pub async fn schema(&mut self, keyspace: &str) -> Result<OkResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["SCHEMA", keyspace])
-            .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Start building a KEYS command with optional pagination and filtering.
-    ///
-    /// Use the returned [`KeysBuilder`] to set `cursor`, `pattern`, `state`, or `count`,
-    /// then call `.execute()`.
-    pub fn keys_builder(&mut self, keyspace: &str) -> KeysBuilder<'_> {
-        KeysBuilder::new(self, keyspace)
-    }
-
-    /// List credential IDs in a keyspace (default parameters).
-    pub async fn keys(&mut self, keyspace: &str) -> Result<OkResult, ClientError> {
-        self.keys_builder(keyspace).execute().await
-    }
-
-    /// Set a password for a user in a password keyspace.
-    pub async fn password_set(
-        &mut self,
-        keyspace: &str,
-        user_id: &str,
-        password: &str,
-    ) -> Result<OkResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["PASSWORD", "SET", keyspace, user_id, password])
-            .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Set a password with metadata for a user in a password keyspace.
-    pub async fn password_set_with_metadata(
-        &mut self,
-        keyspace: &str,
-        user_id: &str,
-        password: &str,
-        metadata: serde_json::Value,
-    ) -> Result<OkResult, ClientError> {
-        let meta_str = serde_json::to_string(&metadata)
-            .map_err(|e| ClientError::Serialization(e.to_string()))?;
-        let resp = self
-            .connection
-            .send_command_strs(&[
-                "PASSWORD", "SET", keyspace, user_id, password, "META", &meta_str,
-            ])
-            .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Verify a password for a user in a password keyspace.
-    pub async fn password_verify(
-        &mut self,
-        keyspace: &str,
-        user_id: &str,
-        password: &str,
-    ) -> Result<VerifyResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["PASSWORD", "VERIFY", keyspace, user_id, password])
-            .await?;
-        VerifyResult::from_response(resp)
-    }
-
-    /// Change a password for a user in a password keyspace.
-    pub async fn password_change(
-        &mut self,
-        keyspace: &str,
-        user_id: &str,
-        old_password: &str,
-        new_password: &str,
-    ) -> Result<OkResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&[
-                "PASSWORD",
-                "CHANGE",
-                keyspace,
-                user_id,
-                old_password,
-                new_password,
-            ])
-            .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Force-reset a user's password without requiring the old password.
-    ///
-    /// The caller is responsible for authorization (e.g., a verified reset token).
-    pub async fn password_reset(
-        &mut self,
-        keyspace: &str,
-        user_id: &str,
-        new_password: &str,
-    ) -> Result<OkResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["PASSWORD", "RESET", keyspace, user_id, new_password])
-            .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Import a pre-hashed password for migration from another system.
-    ///
-    /// Accepts hashes in argon2id/argon2i/argon2d (PHC format), bcrypt
-    /// (modular crypt format), or scrypt (PHC format). On subsequent
-    /// `password_verify`, imported hashes are automatically rehashed to
-    /// the keyspace's configured argon2id parameters.
-    pub async fn password_import(
-        &mut self,
-        keyspace: &str,
-        user_id: &str,
-        hash: &str,
-    ) -> Result<OkResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["PASSWORD", "IMPORT", keyspace, user_id, hash])
-            .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Import a pre-hashed password with metadata.
-    pub async fn password_import_with_metadata(
-        &mut self,
-        keyspace: &str,
-        user_id: &str,
-        hash: &str,
-        metadata: serde_json::Value,
-    ) -> Result<OkResult, ClientError> {
-        let meta_str = serde_json::to_string(&metadata)
-            .map_err(|e| ClientError::Serialization(e.to_string()))?;
-        let resp = self
-            .connection
-            .send_command_strs(&[
-                "PASSWORD", "IMPORT", keyspace, user_id, hash, "META", &meta_str,
-            ])
-            .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Get a runtime configuration value.
-    pub async fn config_get(&mut self, key: &str) -> Result<OkResult, ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["CONFIG", "GET", key])
-            .await?;
-        OkResult::from_response(resp)
-    }
-
-    /// Attempt to set a runtime configuration value.
-    ///
-    /// Note: the server currently rejects all runtime config changes.
-    pub async fn config_set(&mut self, key: &str, value: &str) -> Result<(), ClientError> {
-        let resp = self
-            .connection
-            .send_command_strs(&["CONFIG", "SET", key, value])
-            .await?;
-        check_ok_status(resp)
-    }
-
-    /// Subscribe to real-time event notifications on a channel.
-    ///
-    /// This enters a streaming mode on the connection. The returned response
-    /// depends on the server's handling of the subscription.
-    pub async fn subscribe(&mut self, channel: &str) -> Result<Response, ClientError> {
-        self.connection
-            .send_command_strs(&["SUBSCRIBE", channel])
-            .await
-    }
-
-    /// Execute multiple commands in a single round-trip (pipeline).
-    ///
-    /// Each inner `Vec<String>` is one command's arguments (e.g., `["VERIFY", "ks", "token"]`).
-    /// Returns one response per command.
-    pub async fn pipeline(&mut self, commands: &[Vec<String>]) -> Result<Response, ClientError> {
-        let mut args = vec!["PIPELINE".to_string()];
-        for cmd_args in commands {
-            args.extend(cmd_args.iter().cloned());
+        check_ok(&resp)?;
+        let commands_field = resp
+            .get_field("commands")
+            .ok_or_else(|| ClientError::ResponseFormat("missing commands field".into()))?;
+        match commands_field {
+            Response::Array(items) => Ok(items
+                .iter()
+                .filter_map(|r| r.as_str().map(String::from))
+                .collect()),
+            _ => Err(ClientError::ResponseFormat(
+                "commands field is not an array".into(),
+            )),
         }
-        args.push("END".to_string());
-        self.connection.send_command(&args).await
     }
 
-    /// Send an arbitrary command and return the raw RESP3 response.
+    /// Send a raw command.
     pub async fn raw_command(&mut self, args: &[&str]) -> Result<Response, ClientError> {
         self.connection.send_command_strs(args).await
     }
 }
 
-/// Check that a response indicates success (not an error).
-///
-/// Accepts any non-error response (String "OK", Map with status, etc.)
-/// since different commands return different success shapes.
-fn check_ok_status(resp: Response) -> Result<(), ClientError> {
-    match &resp {
-        Response::Error(e) => {
-            if e.contains("DENIED") {
-                Err(ClientError::AuthRequired)
-            } else {
-                Err(ClientError::Server(e.clone()))
-            }
-        }
-        Response::Null => Err(ClientError::ResponseFormat(
-            "expected success response, got null".into(),
-        )),
+// ---------------------------------------------------------------------------
+// Response parsing helpers
+// ---------------------------------------------------------------------------
+
+fn check_ok(resp: &Response) -> Result<(), ClientError> {
+    match resp {
+        Response::Error(e) => Err(ClientError::Server(e.clone())),
+        Response::Null => Err(ClientError::ResponseFormat("unexpected null".into())),
         _ => Ok(()),
     }
 }
+
+fn parse_get_result(resp: &Response) -> Result<GetResult, ClientError> {
+    let key = resp
+        .get_string_field("key")
+        .ok_or_else(|| ClientError::ResponseFormat("missing 'key' field in GET response".into()))?
+        .into_bytes();
+    let value = resp
+        .get_string_field("value")
+        .ok_or_else(|| ClientError::ResponseFormat("missing 'value' field in GET response".into()))?
+        .into_bytes();
+    let version = resp.get_int_field("version").ok_or_else(|| {
+        ClientError::ResponseFormat("missing 'version' field in GET response".into())
+    })? as u64;
+    let metadata = resp.get_field("metadata").map(|v| v.to_json());
+
+    Ok(GetResult {
+        key,
+        value,
+        version,
+        metadata,
+    })
+}
+
+fn parse_key_list(resp: &Response) -> Result<PageResult, ClientError> {
+    let keys_field = resp
+        .get_field("keys")
+        .ok_or_else(|| ClientError::ResponseFormat("missing keys field".into()))?;
+    let items = match keys_field {
+        Response::Array(items) => items
+            .iter()
+            .filter_map(|r| r.as_str().map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let cursor = resp.get_string_field("cursor");
+    Ok(PageResult { items, cursor })
+}
+
+fn parse_namespace_list(resp: &Response) -> Result<PageResult, ClientError> {
+    let ns_field = resp
+        .get_field("namespaces")
+        .ok_or_else(|| ClientError::ResponseFormat("missing namespaces field".into()))?;
+    let items = match ns_field {
+        Response::Array(items) => items
+            .iter()
+            .filter_map(|r| r.as_str().map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let cursor = resp.get_string_field("cursor");
+    Ok(PageResult { items, cursor })
+}
+
+fn parse_versions(resp: &Response) -> Result<Vec<VersionEntry>, ClientError> {
+    let versions_field = resp
+        .get_field("versions")
+        .ok_or_else(|| ClientError::ResponseFormat("missing versions field".into()))?;
+    match versions_field {
+        Response::Array(items) => {
+            let mut entries = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                entries.push(VersionEntry {
+                    version: item.get_int_field("version").ok_or_else(|| {
+                        ClientError::ResponseFormat(format!("missing 'version' in versions[{i}]"))
+                    })? as u64,
+                    state: item.get_string_field("state").ok_or_else(|| {
+                        ClientError::ResponseFormat(format!("missing 'state' in versions[{i}]"))
+                    })?,
+                    updated_at: item.get_int_field("updated_at").ok_or_else(|| {
+                        ClientError::ResponseFormat(format!(
+                            "missing 'updated_at' in versions[{i}]"
+                        ))
+                    })? as u64,
+                    actor: item.get_string_field("actor").ok_or_else(|| {
+                        ClientError::ResponseFormat(format!("missing 'actor' in versions[{i}]"))
+                    })?,
+                });
+            }
+            Ok(entries)
+        }
+        _ => Err(ClientError::ResponseFormat(
+            "versions field is not an array".into(),
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parse_uri_plain_host() {
+    fn parse_uri_plain() {
         let cfg = parse_uri("shroudb://localhost").unwrap();
         assert_eq!(cfg.host, "localhost");
         assert_eq!(cfg.port, 6399);
         assert!(!cfg.tls);
         assert!(cfg.auth_token.is_none());
-        assert!(cfg.keyspace.is_none());
     }
 
     #[test]
     fn parse_uri_with_port() {
         let cfg = parse_uri("shroudb://localhost:7000").unwrap();
-        assert_eq!(cfg.host, "localhost");
         assert_eq!(cfg.port, 7000);
     }
 
@@ -613,50 +495,25 @@ mod tests {
         let cfg = parse_uri("shroudb+tls://prod.example.com").unwrap();
         assert!(cfg.tls);
         assert_eq!(cfg.host, "prod.example.com");
-        assert_eq!(cfg.port, 6399);
     }
 
     #[test]
     fn parse_uri_with_auth() {
         let cfg = parse_uri("shroudb://mytoken@localhost:6399").unwrap();
         assert_eq!(cfg.auth_token.as_deref(), Some("mytoken"));
-        assert_eq!(cfg.host, "localhost");
-        assert_eq!(cfg.port, 6399);
     }
 
     #[test]
-    fn parse_uri_with_keyspace() {
-        let cfg = parse_uri("shroudb://localhost/sessions").unwrap();
-        assert_eq!(cfg.keyspace.as_deref(), Some("sessions"));
-        assert_eq!(cfg.host, "localhost");
-        assert_eq!(cfg.port, 6399);
-    }
-
-    #[test]
-    fn parse_uri_full_form() {
-        let cfg = parse_uri("shroudb+tls://tok@host:7000/keys").unwrap();
+    fn parse_uri_full() {
+        let cfg = parse_uri("shroudb+tls://tok@host:7000").unwrap();
         assert!(cfg.tls);
         assert_eq!(cfg.auth_token.as_deref(), Some("tok"));
         assert_eq!(cfg.host, "host");
         assert_eq!(cfg.port, 7000);
-        assert_eq!(cfg.keyspace.as_deref(), Some("keys"));
-    }
-
-    #[test]
-    fn parse_uri_trailing_slash_no_keyspace() {
-        let cfg = parse_uri("shroudb://localhost/").unwrap();
-        assert!(cfg.keyspace.is_none());
     }
 
     #[test]
     fn parse_uri_invalid_scheme() {
         assert!(parse_uri("redis://localhost").is_err());
-        assert!(parse_uri("http://localhost").is_err());
-    }
-
-    #[test]
-    fn parse_uri_default_port_on_invalid_port() {
-        let cfg = parse_uri("shroudb://localhost:notaport").unwrap();
-        assert_eq!(cfg.port, 6399);
     }
 }

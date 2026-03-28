@@ -78,7 +78,7 @@ mod tests {
         let frame = response_to_frame(&resp);
         match frame {
             Resp3Frame::SimpleError(msg) => {
-                assert!(msg.starts_with("BADARG"));
+                assert!(msg.starts_with("bad argument:"));
             }
             _ => panic!("expected SimpleError frame"),
         }

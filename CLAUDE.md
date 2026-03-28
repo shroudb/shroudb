@@ -38,5 +38,5 @@ cargo deny check
 
 ## Dependencies
 
-- **Upstream:** commons (shroudb-core, shroudb-crypto, shroudb-storage)
-- **Downstream:** shroudb-auth (shroudb-client, shroudb-protocol), shroudb-moat (shroudb-protocol), shroudb-codegen (reads `protocol.toml` — regenerate clients on spec changes)
+- **Upstream:** commons (shroudb-store, shroudb-acl, shroudb-storage, shroudb-crypto)
+- **Downstream:** engines at v0.2+ (via Store trait), shroudb-moat (embeds engines), shroudb-codegen (reads `protocol.toml` — regenerate SDK clients on spec changes)

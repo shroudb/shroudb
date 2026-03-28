@@ -1,4 +1,4 @@
-use crate::command::{Command, RevokeTarget};
+use crate::command::Command;
 use crate::error::CommandError;
 
 use super::Resp3Frame;
@@ -29,28 +29,20 @@ pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
     let args = &strings[1..];
 
     match verb.as_str() {
-        "ISSUE" => parse_issue(args),
-        "VERIFY" => parse_verify(args),
-        "REVOKE" => parse_revoke(args),
-        "REFRESH" => parse_refresh(args),
-        "UPDATE" => parse_update(args),
-        "INSPECT" => parse_inspect(args),
-        "ROTATE" => parse_rotate(args),
-        "JWKS" => parse_jwks(args),
-        "KEYSTATE" => parse_keystate(args),
-        "HEALTH" => parse_health(args),
-        "KEYS" => parse_keys(args),
-        "SUSPEND" => parse_suspend(args),
-        "UNSUSPEND" => parse_unsuspend(args),
-        "SCHEMA" => parse_schema(args),
-        "CONFIG" => parse_config(args),
-        "SUBSCRIBE" => parse_subscribe(args),
-        "PASSWORD" => parse_password(args),
-        "KEYSPACE_CREATE" => parse_keyspace_create(args),
         "AUTH" => parse_auth(args),
         "PING" => Ok(Command::Ping),
-        "COMMAND" => parse_command_sub(args),
+        "PUT" => parse_put(args),
+        "GET" => parse_get(args),
+        "DELETE" => parse_delete(args),
+        "LIST" => parse_list(args),
+        "VERSIONS" => parse_versions(args),
+        "NAMESPACE" => parse_namespace(args),
         "PIPELINE" => parse_pipeline(&strings),
+        "SUBSCRIBE" => parse_subscribe(args),
+        "UNSUBSCRIBE" => Ok(Command::Unsubscribe),
+        "HEALTH" => Ok(Command::Health),
+        "CONFIG" => parse_config(args),
+        "COMMAND" => parse_command_sub(args),
         _ => Err(CommandError::BadArg {
             message: format!("unknown command: {verb}"),
         }),
@@ -59,737 +51,737 @@ pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
 
 fn frame_to_string(frame: Resp3Frame) -> Result<String, CommandError> {
     match frame {
-        Resp3Frame::BulkString(data) => String::from_utf8(data).map_err(|_| CommandError::BadArg {
-            message: "non-UTF-8 bulk string".into(),
+        Resp3Frame::BulkString(b) => String::from_utf8(b).map_err(|_| CommandError::BadArg {
+            message: "invalid UTF-8 in argument".into(),
         }),
+        Resp3Frame::SimpleString(s) => Ok(s),
+        Resp3Frame::Integer(i) => Ok(i.to_string()),
         _ => Err(CommandError::BadArg {
-            message: "expected bulk string element".into(),
+            message: "expected string or bulk string argument".into(),
         }),
     }
 }
 
-fn require_arg<'a>(args: &'a [String], index: usize, name: &str) -> Result<&'a str, CommandError> {
-    args.get(index)
-        .map(|s| s.as_str())
-        .ok_or_else(|| CommandError::BadArg {
-            message: format!("missing required argument: {name}"),
+fn require_args(args: &[String], min: usize, cmd: &str) -> Result<(), CommandError> {
+    if args.len() < min {
+        Err(CommandError::BadArg {
+            message: format!("{cmd} requires at least {min} argument(s)"),
         })
+    } else {
+        Ok(())
+    }
 }
 
-/// Find a keyword in the args and return the value after it.
-fn find_opt<'a>(args: &'a [String], keyword: &str) -> Option<&'a str> {
-    args.windows(2).find_map(|w| {
-        if w[0].eq_ignore_ascii_case(keyword) {
-            Some(w[1].as_str())
-        } else {
-            None
-        }
+// ── AUTH <token> ─────────────────────────────────────────────────────
+
+fn parse_auth(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 1, "AUTH")?;
+    Ok(Command::Auth {
+        token: args[0].clone(),
     })
 }
 
-/// Check if a keyword flag is present.
-fn has_flag(args: &[String], keyword: &str) -> bool {
-    args.iter().any(|a| a.eq_ignore_ascii_case(keyword))
-}
+// ── PUT <ns> <key> [VALUE <bytes>] [META <json>] ─────────────────────
 
-// ISSUE <keyspace> [CLAIMS <json>] [META <json>] [TTL <secs>] [IDEMPOTENCY_KEY <key>]
-fn parse_issue(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let rest = &args[1..];
+fn parse_put(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 2, "PUT")?;
+    let ns = args[0].clone();
+    let key = args[1].as_bytes().to_vec();
 
-    let claims = find_opt(rest, "CLAIMS")
-        .map(|s| {
-            serde_json::from_str(s).map_err(|e| CommandError::BadArg {
-                message: format!("invalid CLAIMS json: {e}"),
-            })
-        })
-        .transpose()?;
+    let mut value = Vec::new();
+    let mut metadata = None;
+    let mut i = 2;
 
-    let metadata = find_opt(rest, "META")
-        .map(|s| {
-            serde_json::from_str(s).map_err(|e| CommandError::BadArg {
-                message: format!("invalid META json: {e}"),
-            })
-        })
-        .transpose()?;
-
-    let ttl_secs = find_opt(rest, "TTL")
-        .map(|s| {
-            s.parse::<u64>().map_err(|e| CommandError::BadArg {
-                message: format!("invalid TTL: {e}"),
-            })
-        })
-        .transpose()?;
-
-    let idempotency_key = find_opt(rest, "IDEMPOTENCY_KEY").map(|s| s.to_owned());
-
-    Ok(Command::Issue {
-        keyspace,
-        claims,
-        metadata,
-        ttl_secs,
-        idempotency_key,
-    })
-}
-
-// VERIFY <keyspace> <token> [PAYLOAD <data>] [CHECKREV]
-fn parse_verify(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let token = require_arg(args, 1, "token")?.to_owned();
-    let rest = &args[2..];
-
-    let payload = find_opt(rest, "PAYLOAD").map(|s| s.to_owned());
-    let check_revoked = has_flag(rest, "CHECKREV");
-
-    Ok(Command::Verify {
-        keyspace,
-        token,
-        payload,
-        check_revoked,
-    })
-}
-
-// REVOKE <keyspace> <id>
-// REVOKE <keyspace> FAMILY <fid>
-// REVOKE <keyspace> BULK <id1> <id2> ...
-// optional trailing [TTL <secs>]
-fn parse_revoke(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let rest = &args[1..];
-
-    if rest.is_empty() {
-        return Err(CommandError::BadArg {
-            message: "REVOKE requires a target".into(),
+    // Three-arg form: PUT ns key value (positional, no keywords)
+    // Detect by checking if args[2] exists and is NOT followed by a keyword pair
+    // Simple heuristic: if total args == 3, it's positional
+    if args.len() == 3 {
+        value = args[2].as_bytes().to_vec();
+        return Ok(Command::Put {
+            ns,
+            key,
+            value,
+            metadata,
         });
     }
 
-    let second = rest[0].to_ascii_uppercase();
-
-    let (target, remaining) = if second == "FAMILY" {
-        let fid = require_arg(rest, 1, "family_id")?.to_owned();
-        (RevokeTarget::Family(fid), &rest[2..])
-    } else if second == "BULK" {
-        // Collect IDs until we hit TTL or end
-        let mut ids = Vec::new();
-        let mut i = 1;
-        while i < rest.len() {
-            if rest[i].eq_ignore_ascii_case("TTL") {
-                break;
-            }
-            ids.push(rest[i].clone());
+    while i < args.len() {
+        let upper = args[i].to_ascii_uppercase();
+        if upper == "VALUE" {
             i += 1;
-        }
-        if ids.is_empty() {
+            if i >= args.len() {
+                return Err(CommandError::BadArg {
+                    message: "VALUE requires a value".into(),
+                });
+            }
+            value = args[i].as_bytes().to_vec();
+        } else if upper == "META" {
+            i += 1;
+            if i >= args.len() {
+                return Err(CommandError::BadArg {
+                    message: "META requires a JSON value".into(),
+                });
+            }
+            let json: serde_json::Value =
+                serde_json::from_str(&args[i]).map_err(|e| CommandError::BadArg {
+                    message: format!("invalid META JSON: {e}"),
+                })?;
+            metadata = Some(json);
+        } else {
             return Err(CommandError::BadArg {
-                message: "REVOKE BULK requires at least one id".into(),
+                message: format!("unexpected argument: {}", args[i]),
             });
         }
-        (RevokeTarget::Bulk(ids), &rest[i..])
-    } else {
-        (RevokeTarget::Single(rest[0].clone()), &rest[1..])
-    };
+        i += 1;
+    }
 
-    let ttl_secs = find_opt(remaining, "TTL")
-        .map(|s| {
-            s.parse::<u64>().map_err(|e| CommandError::BadArg {
-                message: format!("invalid TTL: {e}"),
-            })
-        })
-        .transpose()?;
-
-    Ok(Command::Revoke {
-        keyspace,
-        target,
-        ttl_secs,
-    })
-}
-
-// REFRESH <keyspace> <token>
-fn parse_refresh(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let token = require_arg(args, 1, "token")?.to_owned();
-    Ok(Command::Refresh { keyspace, token })
-}
-
-// UPDATE <keyspace> <credential_id> META <json>
-fn parse_update(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let credential_id = require_arg(args, 1, "credential_id")?.to_owned();
-    let rest = &args[2..];
-
-    let meta_str = find_opt(rest, "META").ok_or_else(|| CommandError::BadArg {
-        message: "UPDATE requires META <json>".into(),
-    })?;
-
-    let metadata = serde_json::from_str(meta_str).map_err(|e| CommandError::BadArg {
-        message: format!("invalid META json: {e}"),
-    })?;
-
-    Ok(Command::Update {
-        keyspace,
-        credential_id,
+    Ok(Command::Put {
+        ns,
+        key,
+        value,
         metadata,
     })
 }
 
-// INSPECT <keyspace> <credential_id>
-fn parse_inspect(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let credential_id = require_arg(args, 1, "credential_id")?.to_owned();
-    Ok(Command::Inspect {
-        keyspace,
-        credential_id,
+// ── GET <ns> <key> [VERSION <n>] [META] ──────────────────────────────
+
+fn parse_get(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 2, "GET")?;
+    let ns = args[0].clone();
+    let key = args[1].as_bytes().to_vec();
+
+    let mut version = None;
+    let mut meta = false;
+    let mut i = 2;
+
+    while i < args.len() {
+        match args[i].to_ascii_uppercase().as_str() {
+            "VERSION" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(CommandError::BadArg {
+                        message: "VERSION requires a number".into(),
+                    });
+                }
+                version = Some(args[i].parse::<u64>().map_err(|_| CommandError::BadArg {
+                    message: "VERSION must be a positive integer".into(),
+                })?);
+            }
+            "META" => {
+                meta = true;
+            }
+            _ => {
+                return Err(CommandError::BadArg {
+                    message: format!("unexpected argument: {}", args[i]),
+                });
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Get {
+        ns,
+        key,
+        version,
+        meta,
     })
 }
 
-// ROTATE <keyspace> [FORCE] [NOWAIT] [DRYRUN]
-fn parse_rotate(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let rest = &args[1..];
-    Ok(Command::Rotate {
-        keyspace,
-        force: has_flag(rest, "FORCE"),
-        nowait: has_flag(rest, "NOWAIT"),
-        dryrun: has_flag(rest, "DRYRUN"),
+// ── DELETE <ns> <key> ────────────────────────────────────────────────
+
+fn parse_delete(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 2, "DELETE")?;
+    Ok(Command::Delete {
+        ns: args[0].clone(),
+        key: args[1].as_bytes().to_vec(),
     })
 }
 
-// JWKS <keyspace>
-fn parse_jwks(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    Ok(Command::Jwks { keyspace })
-}
+// ── LIST <ns> [PREFIX <prefix>] [CURSOR <cursor>] [LIMIT <n>] ───────
 
-// KEYSTATE <keyspace>
-fn parse_keystate(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    Ok(Command::KeyState { keyspace })
-}
+fn parse_list(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 1, "LIST")?;
+    let ns = args[0].clone();
 
-// HEALTH [<keyspace>]
-fn parse_health(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = args.first().map(|s| s.to_owned());
-    Ok(Command::Health { keyspace })
-}
+    let mut prefix = None;
+    let mut cursor = None;
+    let mut limit = None;
+    let mut i = 1;
 
-// KEYS <keyspace> [CURSOR <c>] [MATCH <p>] [STATE <f>] [COUNT <n>]
-fn parse_keys(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let rest = &args[1..];
+    while i < args.len() {
+        match args[i].to_ascii_uppercase().as_str() {
+            "PREFIX" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(CommandError::BadArg {
+                        message: "PREFIX requires a value".into(),
+                    });
+                }
+                prefix = Some(args[i].as_bytes().to_vec());
+            }
+            "CURSOR" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(CommandError::BadArg {
+                        message: "CURSOR requires a value".into(),
+                    });
+                }
+                cursor = Some(args[i].clone());
+            }
+            "LIMIT" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(CommandError::BadArg {
+                        message: "LIMIT requires a number".into(),
+                    });
+                }
+                limit = Some(args[i].parse::<usize>().map_err(|_| CommandError::BadArg {
+                    message: "LIMIT must be a positive integer".into(),
+                })?);
+            }
+            _ => {
+                return Err(CommandError::BadArg {
+                    message: format!("unexpected argument: {}", args[i]),
+                });
+            }
+        }
+        i += 1;
+    }
 
-    let cursor = find_opt(rest, "CURSOR").map(|s| s.to_owned());
-    let pattern = find_opt(rest, "MATCH").map(|s| s.to_owned());
-    let state_filter = find_opt(rest, "STATE").map(|s| s.to_owned());
-    let count = find_opt(rest, "COUNT")
-        .map(|s| {
-            s.parse::<usize>().map_err(|e| CommandError::BadArg {
-                message: format!("invalid COUNT: {e}"),
-            })
-        })
-        .transpose()?;
-
-    Ok(Command::Keys {
-        keyspace,
+    Ok(Command::List {
+        ns,
+        prefix,
         cursor,
-        pattern,
-        state_filter,
-        count,
+        limit,
     })
 }
 
-// SUSPEND <keyspace> <credential_id>
-fn parse_suspend(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let credential_id = require_arg(args, 1, "credential_id")?.to_owned();
-    Ok(Command::Suspend {
-        keyspace,
-        credential_id,
+// ── VERSIONS <ns> <key> [LIMIT <n>] [FROM <version>] ────────────────
+
+fn parse_versions(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 2, "VERSIONS")?;
+    let ns = args[0].clone();
+    let key = args[1].as_bytes().to_vec();
+
+    let mut limit = None;
+    let mut from = None;
+    let mut i = 2;
+
+    while i < args.len() {
+        match args[i].to_ascii_uppercase().as_str() {
+            "LIMIT" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(CommandError::BadArg {
+                        message: "LIMIT requires a number".into(),
+                    });
+                }
+                limit = Some(args[i].parse::<usize>().map_err(|_| CommandError::BadArg {
+                    message: "LIMIT must be a positive integer".into(),
+                })?);
+            }
+            "FROM" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(CommandError::BadArg {
+                        message: "FROM requires a version number".into(),
+                    });
+                }
+                from = Some(args[i].parse::<u64>().map_err(|_| CommandError::BadArg {
+                    message: "FROM must be a positive integer".into(),
+                })?);
+            }
+            _ => {
+                return Err(CommandError::BadArg {
+                    message: format!("unexpected argument: {}", args[i]),
+                });
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::Versions {
+        ns,
+        key,
+        limit,
+        from,
     })
 }
 
-// UNSUSPEND <keyspace> <credential_id>
-fn parse_unsuspend(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    let credential_id = require_arg(args, 1, "credential_id")?.to_owned();
-    Ok(Command::Unsuspend {
-        keyspace,
-        credential_id,
-    })
+// ── NAMESPACE <subcommand> ... ───────────────────────────────────────
+
+fn parse_namespace(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 1, "NAMESPACE")?;
+    let sub = args[0].to_ascii_uppercase();
+    let sub_args = &args[1..];
+
+    match sub.as_str() {
+        "CREATE" => {
+            require_args(sub_args, 1, "NAMESPACE CREATE")?;
+            let name = sub_args[0].clone();
+            let mut schema = None;
+            let mut max_versions = None;
+            let mut tombstone_retention_secs = None;
+            let mut i = 1;
+
+            while i < sub_args.len() {
+                match sub_args[i].to_ascii_uppercase().as_str() {
+                    "SCHEMA" => {
+                        i += 1;
+                        if i >= sub_args.len() {
+                            return Err(CommandError::BadArg {
+                                message: "SCHEMA requires a JSON value".into(),
+                            });
+                        }
+                        schema = Some(serde_json::from_str(&sub_args[i]).map_err(|e| {
+                            CommandError::BadArg {
+                                message: format!("invalid SCHEMA JSON: {e}"),
+                            }
+                        })?);
+                    }
+                    "MAX_VERSIONS" => {
+                        i += 1;
+                        if i >= sub_args.len() {
+                            return Err(CommandError::BadArg {
+                                message: "MAX_VERSIONS requires a number".into(),
+                            });
+                        }
+                        max_versions =
+                            Some(
+                                sub_args[i]
+                                    .parse::<u64>()
+                                    .map_err(|_| CommandError::BadArg {
+                                        message: "MAX_VERSIONS must be a positive integer".into(),
+                                    })?,
+                            );
+                    }
+                    "TOMBSTONE_RETENTION" => {
+                        i += 1;
+                        if i >= sub_args.len() {
+                            return Err(CommandError::BadArg {
+                                message: "TOMBSTONE_RETENTION requires a number (seconds)".into(),
+                            });
+                        }
+                        tombstone_retention_secs = Some(sub_args[i].parse::<u64>().map_err(
+                            |_| CommandError::BadArg {
+                                message: "TOMBSTONE_RETENTION must be a positive integer".into(),
+                            },
+                        )?);
+                    }
+                    _ => {
+                        return Err(CommandError::BadArg {
+                            message: format!("unexpected argument: {}", sub_args[i]),
+                        });
+                    }
+                }
+                i += 1;
+            }
+
+            Ok(Command::NamespaceCreate {
+                name,
+                schema,
+                max_versions,
+                tombstone_retention_secs,
+            })
+        }
+        "DROP" => {
+            require_args(sub_args, 1, "NAMESPACE DROP")?;
+            let name = sub_args[0].clone();
+            let force = sub_args
+                .get(1)
+                .is_some_and(|s| s.eq_ignore_ascii_case("FORCE"));
+            Ok(Command::NamespaceDrop { name, force })
+        }
+        "LIST" => {
+            let mut cursor = None;
+            let mut limit = None;
+            let mut i = 0;
+            while i < sub_args.len() {
+                match sub_args[i].to_ascii_uppercase().as_str() {
+                    "CURSOR" => {
+                        i += 1;
+                        cursor = sub_args.get(i).cloned();
+                    }
+                    "LIMIT" => {
+                        i += 1;
+                        limit = sub_args.get(i).and_then(|s| s.parse::<usize>().ok());
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            Ok(Command::NamespaceList { cursor, limit })
+        }
+        "INFO" => {
+            require_args(sub_args, 1, "NAMESPACE INFO")?;
+            Ok(Command::NamespaceInfo {
+                name: sub_args[0].clone(),
+            })
+        }
+        "ALTER" => {
+            require_args(sub_args, 1, "NAMESPACE ALTER")?;
+            let name = sub_args[0].clone();
+            let mut schema = None;
+            let mut max_versions = None;
+            let mut tombstone_retention_secs = None;
+            let mut i = 1;
+
+            while i < sub_args.len() {
+                match sub_args[i].to_ascii_uppercase().as_str() {
+                    "SCHEMA" => {
+                        i += 1;
+                        schema = sub_args.get(i).and_then(|s| serde_json::from_str(s).ok());
+                    }
+                    "MAX_VERSIONS" => {
+                        i += 1;
+                        max_versions = sub_args.get(i).and_then(|s| s.parse().ok());
+                    }
+                    "TOMBSTONE_RETENTION" => {
+                        i += 1;
+                        tombstone_retention_secs = sub_args.get(i).and_then(|s| s.parse().ok());
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+
+            Ok(Command::NamespaceAlter {
+                name,
+                schema,
+                max_versions,
+                tombstone_retention_secs,
+            })
+        }
+        "VALIDATE" => {
+            require_args(sub_args, 1, "NAMESPACE VALIDATE")?;
+            Ok(Command::NamespaceValidate {
+                name: sub_args[0].clone(),
+            })
+        }
+        _ => Err(CommandError::BadArg {
+            message: format!("unknown NAMESPACE subcommand: {sub}"),
+        }),
+    }
 }
 
-// SCHEMA <keyspace>
-fn parse_schema(args: &[String]) -> Result<Command, CommandError> {
-    let keyspace = require_arg(args, 0, "keyspace")?.to_owned();
-    Ok(Command::Schema { keyspace })
+// ── PIPELINE <count> ─────────────────────────────────────────────────
+
+fn parse_pipeline(strings: &[String]) -> Result<Command, CommandError> {
+    require_args(&strings[1..], 1, "PIPELINE")?;
+    let count = strings[1]
+        .parse::<usize>()
+        .map_err(|_| CommandError::BadArg {
+            message: "PIPELINE requires a count".into(),
+        })?;
+    let _ = count; // count is informational; actual commands follow as separate frames
+    Ok(Command::Pipeline(Vec::new()))
 }
 
-// CONFIG GET <key> | CONFIG SET <key> <value>
+// ── SUBSCRIBE <ns> [KEY <key>] [EVENTS <PUT|DELETE|*>] ───────────────
+
+fn parse_subscribe(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 1, "SUBSCRIBE")?;
+    let ns = args[0].clone();
+    let mut key = None;
+    let mut events = Vec::new();
+    let mut i = 1;
+
+    while i < args.len() {
+        match args[i].to_ascii_uppercase().as_str() {
+            "KEY" => {
+                i += 1;
+                if i < args.len() {
+                    key = Some(args[i].as_bytes().to_vec());
+                }
+            }
+            "EVENTS" => {
+                i += 1;
+                while i < args.len() && !["KEY"].contains(&args[i].to_ascii_uppercase().as_str()) {
+                    events.push(args[i].to_ascii_uppercase());
+                    i += 1;
+                }
+                continue; // don't increment i again
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    Ok(Command::Subscribe { ns, key, events })
+}
+
+// ── CONFIG GET|SET ───────────────────────────────────────────────────
+
 fn parse_config(args: &[String]) -> Result<Command, CommandError> {
-    let sub = require_arg(args, 0, "subcommand")?;
-    match sub.to_ascii_uppercase().as_str() {
-        "GET" => {
-            let key = require_arg(args, 1, "key")?.to_owned();
-            Ok(Command::ConfigGet { key })
-        }
-        "SET" => {
-            let key = require_arg(args, 1, "key")?.to_owned();
-            let value = require_arg(args, 2, "value")?.to_owned();
-            Ok(Command::ConfigSet { key, value })
-        }
-        "LIST" => Ok(Command::ConfigList),
-        other => Err(CommandError::BadArg {
-            message: format!("unknown CONFIG subcommand: {other}"),
-        }),
-    }
-}
-
-// PASSWORD SET <keyspace> <user_id> <plaintext> [META <json>]
-// PASSWORD VERIFY <keyspace> <user_id> <plaintext>
-// PASSWORD CHANGE <keyspace> <user_id> <old_plaintext> <new_plaintext>
-// PASSWORD IMPORT <keyspace> <user_id> <hash> [META <json>]
-fn parse_password(args: &[String]) -> Result<Command, CommandError> {
-    let sub = require_arg(args, 0, "subcommand")?;
-    match sub.to_ascii_uppercase().as_str() {
-        "SET" => {
-            let keyspace = require_arg(args, 1, "keyspace")?.to_owned();
-            let user_id = require_arg(args, 2, "user_id")?.to_owned();
-            let plaintext = require_arg(args, 3, "plaintext")?.to_owned();
-            let rest = &args[4..];
-            let metadata = find_opt(rest, "META")
-                .map(|s| {
-                    serde_json::from_str(s).map_err(|e| CommandError::BadArg {
-                        message: format!("invalid META json: {e}"),
-                    })
-                })
-                .transpose()?;
-            Ok(Command::PasswordSet {
-                keyspace,
-                user_id,
-                plaintext,
-                metadata,
-            })
-        }
-        "VERIFY" => {
-            let keyspace = require_arg(args, 1, "keyspace")?.to_owned();
-            let user_id = require_arg(args, 2, "user_id")?.to_owned();
-            let plaintext = require_arg(args, 3, "plaintext")?.to_owned();
-            Ok(Command::PasswordVerify {
-                keyspace,
-                user_id,
-                plaintext,
-            })
-        }
-        "CHANGE" => {
-            let keyspace = require_arg(args, 1, "keyspace")?.to_owned();
-            let user_id = require_arg(args, 2, "user_id")?.to_owned();
-            let old_plaintext = require_arg(args, 3, "old_plaintext")?.to_owned();
-            let new_plaintext = require_arg(args, 4, "new_plaintext")?.to_owned();
-            Ok(Command::PasswordChange {
-                keyspace,
-                user_id,
-                old_plaintext,
-                new_plaintext,
-            })
-        }
-        "RESET" => {
-            let keyspace = require_arg(args, 1, "keyspace")?.to_owned();
-            let user_id = require_arg(args, 2, "user_id")?.to_owned();
-            let new_plaintext = require_arg(args, 3, "new_plaintext")?.to_owned();
-            Ok(Command::PasswordReset {
-                keyspace,
-                user_id,
-                new_plaintext,
-            })
-        }
-        "IMPORT" => {
-            let keyspace = require_arg(args, 1, "keyspace")?.to_owned();
-            let user_id = require_arg(args, 2, "user_id")?.to_owned();
-            let hash = require_arg(args, 3, "hash")?.to_owned();
-            let rest = &args[4..];
-            let metadata = find_opt(rest, "META")
-                .map(|s| {
-                    serde_json::from_str(s).map_err(|e| CommandError::BadArg {
-                        message: format!("invalid META json: {e}"),
-                    })
-                })
-                .transpose()?;
-            Ok(Command::PasswordImport {
-                keyspace,
-                user_id,
-                hash,
-                metadata,
-            })
-        }
-        other => Err(CommandError::BadArg {
-            message: format!("unknown PASSWORD subcommand: {other}"),
-        }),
-    }
-}
-
-// KEYSPACE_CREATE <name> TYPE <type> [ALGORITHM <alg>] [ROTATION_DAYS <n>] [DRAIN_DAYS <n>] [TTL <n>]
-fn parse_keyspace_create(args: &[String]) -> Result<Command, CommandError> {
-    let name = require_arg(args, 0, "name")?.to_owned();
-    let rest = &args[1..];
-
-    let keyspace_type = find_opt(rest, "TYPE")
-        .ok_or_else(|| CommandError::BadArg {
-            message: "KEYSPACE_CREATE requires TYPE".into(),
-        })?
-        .to_owned();
-
-    let algorithm = find_opt(rest, "ALGORITHM").map(|s| s.to_owned());
-
-    let rotation_days = find_opt(rest, "ROTATION_DAYS")
-        .map(|s| {
-            s.parse::<u32>().map_err(|e| CommandError::BadArg {
-                message: format!("invalid ROTATION_DAYS: {e}"),
-            })
-        })
-        .transpose()?;
-
-    let drain_days = find_opt(rest, "DRAIN_DAYS")
-        .map(|s| {
-            s.parse::<u32>().map_err(|e| CommandError::BadArg {
-                message: format!("invalid DRAIN_DAYS: {e}"),
-            })
-        })
-        .transpose()?;
-
-    let default_ttl_secs = find_opt(rest, "TTL")
-        .map(|s| {
-            s.parse::<u64>().map_err(|e| CommandError::BadArg {
-                message: format!("invalid TTL: {e}"),
-            })
-        })
-        .transpose()?;
-
-    Ok(Command::KeyspaceCreate {
-        name,
-        keyspace_type,
-        algorithm,
-        rotation_days,
-        drain_days,
-        default_ttl_secs,
-    })
-}
-
-// COMMAND LIST
-fn parse_command_sub(args: &[String]) -> Result<Command, CommandError> {
-    if args.is_empty() {
-        return Err(CommandError::BadArg {
-            message: "COMMAND requires a subcommand (LIST)".into(),
-        });
-    }
+    require_args(args, 1, "CONFIG")?;
     let sub = args[0].to_ascii_uppercase();
     match sub.as_str() {
-        "LIST" => Ok(Command::CommandList),
-        other => Err(CommandError::BadArg {
-            message: format!("unknown COMMAND subcommand: {other}"),
+        "GET" => {
+            require_args(&args[1..], 1, "CONFIG GET")?;
+            Ok(Command::ConfigGet {
+                key: args[1].clone(),
+            })
+        }
+        "SET" => {
+            require_args(&args[1..], 2, "CONFIG SET")?;
+            Ok(Command::ConfigSet {
+                key: args[1].clone(),
+                value: args[2].clone(),
+            })
+        }
+        _ => Err(CommandError::BadArg {
+            message: format!("unknown CONFIG subcommand: {sub}"),
         }),
     }
 }
 
-// AUTH <token>
-fn parse_auth(args: &[String]) -> Result<Command, CommandError> {
-    let token = require_arg(args, 0, "token")?.to_owned();
-    Ok(Command::Auth { token })
-}
+// ── COMMAND LIST ─────────────────────────────────────────────────────
 
-// SUBSCRIBE <channel>
-fn parse_subscribe(args: &[String]) -> Result<Command, CommandError> {
-    let channel = require_arg(args, 0, "channel")?.to_owned();
-    Ok(Command::Subscribe { channel })
-}
-
-// PIPELINE ... END — accumulate commands between PIPELINE and END
-fn parse_pipeline(all_strings: &[String]) -> Result<Command, CommandError> {
-    // all_strings[0] is "PIPELINE", find "END"
-    let end_idx = all_strings
-        .iter()
-        .position(|s| s.eq_ignore_ascii_case("END"))
-        .ok_or_else(|| CommandError::BadArg {
-            message: "PIPELINE without END".into(),
-        })?;
-
-    // Between PIPELINE and END, split on command boundaries.
-    // Each sub-command is delimited by known verbs.
-    let inner = &all_strings[1..end_idx];
-    if inner.is_empty() {
-        return Ok(Command::Pipeline(vec![]));
+fn parse_command_sub(args: &[String]) -> Result<Command, CommandError> {
+    if args.is_empty() || args[0].eq_ignore_ascii_case("LIST") {
+        Ok(Command::CommandList)
+    } else {
+        Err(CommandError::BadArg {
+            message: format!("unknown COMMAND subcommand: {}", args[0]),
+        })
     }
-
-    // Re-parse each sub-command by finding verb boundaries
-    let verbs = [
-        "ISSUE",
-        "VERIFY",
-        "REVOKE",
-        "REFRESH",
-        "UPDATE",
-        "INSPECT",
-        "ROTATE",
-        "JWKS",
-        "KEYSTATE",
-        "HEALTH",
-        "KEYS",
-        "SUSPEND",
-        "UNSUSPEND",
-        "SCHEMA",
-        "CONFIG",
-        "PASSWORD",
-        "SUBSCRIBE",
-        "KEYSPACE_CREATE",
-        "AUTH",
-        "PING",
-        "COMMAND",
-    ];
-
-    let mut commands = Vec::new();
-    let mut start = 0;
-
-    for i in 1..=inner.len() {
-        let is_boundary =
-            i == inner.len() || verbs.contains(&inner[i].to_ascii_uppercase().as_str());
-        if is_boundary {
-            let slice = &inner[start..i];
-            if !slice.is_empty() {
-                let frame = Resp3Frame::Array(
-                    slice
-                        .iter()
-                        .map(|s| Resp3Frame::BulkString(s.as_bytes().to_vec()))
-                        .collect(),
-                );
-                commands.push(parse_command(frame)?);
-            }
-            start = i;
-        }
-    }
-
-    Ok(Command::Pipeline(commands))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn bs(s: &str) -> Resp3Frame {
-        Resp3Frame::BulkString(s.as_bytes().to_vec())
+    fn frame(args: &[&str]) -> Resp3Frame {
+        Resp3Frame::Array(
+            args.iter()
+                .map(|s| Resp3Frame::BulkString(s.as_bytes().to_vec()))
+                .collect(),
+        )
     }
 
-    fn cmd_array(parts: &[&str]) -> Resp3Frame {
-        Resp3Frame::Array(parts.iter().map(|s| bs(s)).collect())
+    #[test]
+    fn parse_ping() {
+        let cmd = parse_command(frame(&["PING"])).unwrap();
+        assert!(matches!(cmd, Command::Ping));
+    }
+
+    #[test]
+    fn parse_auth() {
+        let cmd = parse_command(frame(&["AUTH", "my-token"])).unwrap();
+        match cmd {
+            Command::Auth { token } => assert_eq!(token, "my-token"),
+            _ => panic!("expected Auth"),
+        }
+    }
+
+    #[test]
+    fn parse_put_positional() {
+        let cmd = parse_command(frame(&["PUT", "ns", "key", "value"])).unwrap();
+        match cmd {
+            Command::Put {
+                ns,
+                key,
+                value,
+                metadata,
+            } => {
+                assert_eq!(ns, "ns");
+                assert_eq!(key, b"key");
+                assert_eq!(value, b"value");
+                assert!(metadata.is_none());
+            }
+            _ => panic!("expected Put"),
+        }
+    }
+
+    #[test]
+    fn parse_put_with_meta() {
+        let cmd = parse_command(frame(&[
+            "PUT",
+            "ns",
+            "key",
+            "VALUE",
+            "data",
+            "META",
+            r#"{"env":"prod"}"#,
+        ]))
+        .unwrap();
+        match cmd {
+            Command::Put { metadata, .. } => {
+                assert!(metadata.is_some());
+            }
+            _ => panic!("expected Put"),
+        }
+    }
+
+    #[test]
+    fn parse_get_basic() {
+        let cmd = parse_command(frame(&["GET", "ns", "key"])).unwrap();
+        match cmd {
+            Command::Get {
+                ns,
+                key,
+                version,
+                meta,
+            } => {
+                assert_eq!(ns, "ns");
+                assert_eq!(key, b"key");
+                assert!(version.is_none());
+                assert!(!meta);
+            }
+            _ => panic!("expected Get"),
+        }
+    }
+
+    #[test]
+    fn parse_get_with_version_and_meta() {
+        let cmd = parse_command(frame(&["GET", "ns", "key", "VERSION", "3", "META"])).unwrap();
+        match cmd {
+            Command::Get { version, meta, .. } => {
+                assert_eq!(version, Some(3));
+                assert!(meta);
+            }
+            _ => panic!("expected Get"),
+        }
+    }
+
+    #[test]
+    fn parse_delete() {
+        let cmd = parse_command(frame(&["DELETE", "ns", "key"])).unwrap();
+        assert!(matches!(cmd, Command::Delete { .. }));
+    }
+
+    #[test]
+    fn parse_list_basic() {
+        let cmd = parse_command(frame(&["LIST", "ns"])).unwrap();
+        match cmd {
+            Command::List {
+                ns,
+                prefix,
+                cursor,
+                limit,
+            } => {
+                assert_eq!(ns, "ns");
+                assert!(prefix.is_none());
+                assert!(cursor.is_none());
+                assert!(limit.is_none());
+            }
+            _ => panic!("expected List"),
+        }
+    }
+
+    #[test]
+    fn parse_list_with_options() {
+        let cmd = parse_command(frame(&["LIST", "ns", "PREFIX", "user:", "LIMIT", "50"])).unwrap();
+        match cmd {
+            Command::List { prefix, limit, .. } => {
+                assert_eq!(prefix, Some(b"user:".to_vec()));
+                assert_eq!(limit, Some(50));
+            }
+            _ => panic!("expected List"),
+        }
+    }
+
+    #[test]
+    fn parse_versions() {
+        let cmd = parse_command(frame(&["VERSIONS", "ns", "key", "LIMIT", "5"])).unwrap();
+        match cmd {
+            Command::Versions {
+                ns,
+                key,
+                limit,
+                from,
+            } => {
+                assert_eq!(ns, "ns");
+                assert_eq!(key, b"key");
+                assert_eq!(limit, Some(5));
+                assert!(from.is_none());
+            }
+            _ => panic!("expected Versions"),
+        }
+    }
+
+    #[test]
+    fn parse_namespace_create() {
+        let cmd = parse_command(frame(&["NAMESPACE", "CREATE", "users"])).unwrap();
+        match cmd {
+            Command::NamespaceCreate { name, .. } => assert_eq!(name, "users"),
+            _ => panic!("expected NamespaceCreate"),
+        }
+    }
+
+    #[test]
+    fn parse_namespace_drop_force() {
+        let cmd = parse_command(frame(&["NAMESPACE", "DROP", "temp", "FORCE"])).unwrap();
+        match cmd {
+            Command::NamespaceDrop { name, force } => {
+                assert_eq!(name, "temp");
+                assert!(force);
+            }
+            _ => panic!("expected NamespaceDrop"),
+        }
+    }
+
+    #[test]
+    fn parse_namespace_info() {
+        let cmd = parse_command(frame(&["NAMESPACE", "INFO", "users"])).unwrap();
+        assert!(matches!(cmd, Command::NamespaceInfo { name } if name == "users"));
+    }
+
+    #[test]
+    fn parse_config_get() {
+        let cmd = parse_command(frame(&["CONFIG", "GET", "max_connections"])).unwrap();
+        match cmd {
+            Command::ConfigGet { key } => assert_eq!(key, "max_connections"),
+            _ => panic!("expected ConfigGet"),
+        }
+    }
+
+    #[test]
+    fn parse_config_set() {
+        let cmd = parse_command(frame(&["CONFIG", "SET", "max_connections", "100"])).unwrap();
+        match cmd {
+            Command::ConfigSet { key, value } => {
+                assert_eq!(key, "max_connections");
+                assert_eq!(value, "100");
+            }
+            _ => panic!("expected ConfigSet"),
+        }
+    }
+
+    #[test]
+    fn parse_command_list() {
+        let cmd = parse_command(frame(&["COMMAND", "LIST"])).unwrap();
+        assert!(matches!(cmd, Command::CommandList));
     }
 
     #[test]
     fn parse_health() {
-        let frame = cmd_array(&["HEALTH"]);
-        let cmd = parse_command(frame).unwrap();
-        assert!(matches!(cmd, Command::Health { keyspace: None }));
+        let cmd = parse_command(frame(&["HEALTH"])).unwrap();
+        assert!(matches!(cmd, Command::Health));
     }
 
     #[test]
-    fn parse_issue_jwt() {
-        let frame = cmd_array(&["ISSUE", "auth", "CLAIMS", r#"{"sub":"u1"}"#]);
-        let cmd = parse_command(frame).unwrap();
+    fn parse_subscribe() {
+        let cmd = parse_command(frame(&["SUBSCRIBE", "ns", "KEY", "mykey"])).unwrap();
         match cmd {
-            Command::Issue {
-                keyspace, claims, ..
-            } => {
-                assert_eq!(keyspace, "auth");
-                assert!(claims.is_some());
+            Command::Subscribe { ns, key, events } => {
+                assert_eq!(ns, "ns");
+                assert_eq!(key, Some(b"mykey".to_vec()));
+                assert!(events.is_empty());
             }
-            _ => panic!("expected Issue"),
+            _ => panic!("expected Subscribe"),
         }
     }
 
     #[test]
-    fn parse_verify() {
-        let frame = cmd_array(&["VERIFY", "keys", "sk_abc"]);
-        let cmd = parse_command(frame).unwrap();
-        match cmd {
-            Command::Verify {
-                keyspace,
-                token,
-                check_revoked,
-                ..
-            } => {
-                assert_eq!(keyspace, "keys");
-                assert_eq!(token, "sk_abc");
-                assert!(!check_revoked);
-            }
-            _ => panic!("expected Verify"),
-        }
-    }
-
-    #[test]
-    fn parse_revoke_family() {
-        let frame = cmd_array(&["REVOKE", "sessions", "FAMILY", "fam-123"]);
-        let cmd = parse_command(frame).unwrap();
-        match cmd {
-            Command::Revoke {
-                keyspace, target, ..
-            } => {
-                assert_eq!(keyspace, "sessions");
-                assert!(matches!(target, RevokeTarget::Family(ref id) if id == "fam-123"));
-            }
-            _ => panic!("expected Revoke"),
-        }
-    }
-
-    #[test]
-    fn parse_unknown_command() {
-        let frame = cmd_array(&["BOGUS", "arg"]);
-        let err = parse_command(frame).unwrap_err();
+    fn unknown_command_errors() {
+        let err = parse_command(frame(&["FOOBAR"])).unwrap_err();
         assert!(matches!(err, CommandError::BadArg { .. }));
     }
 
-    /// Round-trip: Command → to_wire_args → parse_command → assert match.
-    /// Validates that all PASSWORD variants serialize and parse symmetrically,
-    /// proving the remote auth NOTFOUND issue is not in this crate.
-    fn roundtrip(cmd: &Command) -> Command {
-        let wire = cmd.to_wire_args();
-        let frame = Resp3Frame::Array(
-            wire.iter()
-                .map(|s| Resp3Frame::BulkString(s.as_bytes().to_vec()))
-                .collect(),
-        );
-        parse_command(frame).unwrap()
-    }
-
     #[test]
-    fn roundtrip_password_set() {
-        let cmd = Command::PasswordSet {
-            keyspace: "default_passwords".into(),
-            user_id: "alice".into(),
-            plaintext: "s3cret".into(),
-            metadata: None,
-        };
-        match roundtrip(&cmd) {
-            Command::PasswordSet {
-                keyspace,
-                user_id,
-                plaintext,
-                metadata,
-            } => {
-                assert_eq!(keyspace, "default_passwords");
-                assert_eq!(user_id, "alice");
-                assert_eq!(plaintext, "s3cret");
-                assert!(metadata.is_none());
-            }
-            other => panic!("expected PasswordSet, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn roundtrip_password_set_with_meta() {
-        let meta = serde_json::json!({"role": "admin"});
-        let cmd = Command::PasswordSet {
-            keyspace: "pw".into(),
-            user_id: "bob".into(),
-            plaintext: "pass".into(),
-            metadata: Some(meta.clone()),
-        };
-        match roundtrip(&cmd) {
-            Command::PasswordSet {
-                keyspace,
-                user_id,
-                metadata,
-                ..
-            } => {
-                assert_eq!(keyspace, "pw");
-                assert_eq!(user_id, "bob");
-                assert_eq!(metadata.unwrap(), meta);
-            }
-            other => panic!("expected PasswordSet, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn roundtrip_password_verify() {
-        let cmd = Command::PasswordVerify {
-            keyspace: "default_passwords".into(),
-            user_id: "alice".into(),
-            plaintext: "s3cret".into(),
-        };
-        match roundtrip(&cmd) {
-            Command::PasswordVerify {
-                keyspace,
-                user_id,
-                plaintext,
-            } => {
-                assert_eq!(keyspace, "default_passwords");
-                assert_eq!(user_id, "alice");
-                assert_eq!(plaintext, "s3cret");
-            }
-            other => panic!("expected PasswordVerify, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn roundtrip_password_change() {
-        let cmd = Command::PasswordChange {
-            keyspace: "pw".into(),
-            user_id: "alice".into(),
-            old_plaintext: "old".into(),
-            new_plaintext: "new".into(),
-        };
-        match roundtrip(&cmd) {
-            Command::PasswordChange {
-                keyspace,
-                user_id,
-                old_plaintext,
-                new_plaintext,
-            } => {
-                assert_eq!(keyspace, "pw");
-                assert_eq!(user_id, "alice");
-                assert_eq!(old_plaintext, "old");
-                assert_eq!(new_plaintext, "new");
-            }
-            other => panic!("expected PasswordChange, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn roundtrip_password_reset() {
-        let cmd = Command::PasswordReset {
-            keyspace: "pw".into(),
-            user_id: "alice".into(),
-            new_plaintext: "reset123".into(),
-        };
-        match roundtrip(&cmd) {
-            Command::PasswordReset {
-                keyspace,
-                user_id,
-                new_plaintext,
-            } => {
-                assert_eq!(keyspace, "pw");
-                assert_eq!(user_id, "alice");
-                assert_eq!(new_plaintext, "reset123");
-            }
-            other => panic!("expected PasswordReset, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn roundtrip_password_import() {
-        let cmd = Command::PasswordImport {
-            keyspace: "pw".into(),
-            user_id: "alice".into(),
-            hash: "$argon2id$v=19$m=65536,t=3,p=4$abc$def".into(),
-            metadata: None,
-        };
-        match roundtrip(&cmd) {
-            Command::PasswordImport {
-                keyspace,
-                user_id,
-                hash,
-                metadata,
-            } => {
-                assert_eq!(keyspace, "pw");
-                assert_eq!(user_id, "alice");
-                assert_eq!(hash, "$argon2id$v=19$m=65536,t=3,p=4$abc$def");
-                assert!(metadata.is_none());
-            }
-            other => panic!("expected PasswordImport, got {other:?}"),
-        }
+    fn empty_command_errors() {
+        let err = parse_command(Resp3Frame::Array(vec![])).unwrap_err();
+        assert!(matches!(err, CommandError::BadArg { .. }));
     }
 }

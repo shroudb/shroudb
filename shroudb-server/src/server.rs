@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use shroudb_acl::TokenValidator;
 use shroudb_protocol::CommandDispatcher;
+use shroudb_store::Store;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
@@ -12,9 +14,11 @@ use crate::config::ServerConfig;
 use crate::connection::handle_connection;
 
 /// Run the TCP server until a shutdown signal is received.
-pub async fn run(
+pub async fn run<S: Store + 'static, V: TokenValidator + 'static>(
     config: &ServerConfig,
-    dispatcher: Arc<CommandDispatcher>,
+    dispatcher: Arc<CommandDispatcher<S>>,
+    token_validator: Arc<V>,
+    auth_required: bool,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(config.bind)
@@ -22,19 +26,15 @@ pub async fn run(
         .with_context(|| format!("binding TCP on {}", config.bind))?;
     tracing::info!(addr = %config.bind, "listening");
 
-    // Per-connection rate limit
-    let rate_limit = config.rate_limit;
+    let rate_limit = config.rate_limit_per_second;
 
-    // Optional TLS
     let tls_acceptor = build_tls_acceptor(config)?;
     if tls_acceptor.is_some() {
         tracing::info!("TLS enabled");
     }
 
-    // Optional Unix Domain Socket listener
     #[cfg(unix)]
     let uds_listener = if let Some(ref uds_path) = config.unix_socket {
-        // Remove stale socket file if present.
         let _ = std::fs::remove_file(uds_path);
         let l = tokio::net::UnixListener::bind(uds_path)
             .with_context(|| format!("binding UDS on {}", uds_path.display()))?;
@@ -47,11 +47,9 @@ pub async fn run(
     let mut tasks = JoinSet::new();
 
     loop {
-        // Build futures for TCP accept (and optionally UDS accept).
         tokio::select! {
             biased;
 
-            // Shutdown signal
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
                     tracing::info!("shutdown signal received, stopping accept loop");
@@ -59,20 +57,21 @@ pub async fn run(
                 }
             }
 
-            // TCP accept
             result = listener.accept() => {
                 match result {
                     Ok((tcp_stream, peer_addr)) => {
                         tracing::debug!(%peer_addr, "accepted TCP connection");
                         let disp = Arc::clone(&dispatcher);
+                        let tv = Arc::clone(&token_validator);
+                        let ar = auth_required;
                         let srx = shutdown_rx.clone();
+                        let rl = rate_limit;
                         if let Some(ref acceptor) = tls_acceptor {
                             let acceptor = acceptor.clone();
-                            let rl = rate_limit;
                             tasks.spawn(async move {
                                 match acceptor.accept(tcp_stream).await {
                                     Ok(tls_stream) => {
-                                        handle_connection(tls_stream, disp, srx, rl).await;
+                                        handle_connection(tls_stream, disp, tv, ar, srx, rl).await;
                                     }
                                     Err(e) => {
                                         tracing::warn!(%peer_addr, error = %e, "TLS handshake failed");
@@ -80,9 +79,8 @@ pub async fn run(
                                 }
                             });
                         } else {
-                            let rl = rate_limit;
                             tasks.spawn(async move {
-                                handle_connection(tcp_stream, disp, srx, rl).await;
+                                handle_connection(tcp_stream, disp, tv, ar, srx, rl).await;
                             });
                         }
                     }
@@ -92,7 +90,6 @@ pub async fn run(
                 }
             }
 
-            // UDS accept (only on Unix)
             result = async {
                 #[cfg(unix)]
                 {
@@ -100,7 +97,6 @@ pub async fn run(
                         return uds.accept().await;
                     }
                 }
-                // If no UDS listener, pend forever so the select doesn't spin.
                 std::future::pending().await
             } => {
                 #[cfg(unix)]
@@ -108,10 +104,12 @@ pub async fn run(
                     Ok((uds_stream, _addr)) => {
                         tracing::debug!("accepted UDS connection");
                         let disp = Arc::clone(&dispatcher);
+                        let tv = Arc::clone(&token_validator);
+                        let ar = auth_required;
                         let srx = shutdown_rx.clone();
                         let rl = rate_limit;
                         tasks.spawn(async move {
-                            handle_connection(uds_stream, disp, srx, rl).await;
+                            handle_connection(uds_stream, disp, tv, ar, srx, rl).await;
                         });
                     }
                     Err(e) => {
@@ -124,7 +122,6 @@ pub async fn run(
         }
     }
 
-    // Graceful drain: wait up to 30 seconds for in-flight connections.
     tracing::info!(
         pending = tasks.len(),
         "draining in-flight connections (30s timeout)"
@@ -145,12 +142,11 @@ pub async fn run(
     Ok(())
 }
 
-/// Build a `TlsAcceptor` if both cert and key paths are configured.
 fn build_tls_acceptor(config: &ServerConfig) -> anyhow::Result<Option<TlsAcceptor>> {
     let (cert_path, key_path) = match (&config.tls_cert, &config.tls_key) {
         (Some(c), Some(k)) => (c, k),
         (None, None) => return Ok(None),
-        _ => anyhow::bail!("both resp3_tls_cert and resp3_tls_key must be set (or neither)"),
+        _ => anyhow::bail!("both tls_cert and tls_key must be set (or neither)"),
     };
 
     let cert_pem = std::fs::read(cert_path)

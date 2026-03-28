@@ -1,55 +1,42 @@
-/// Command execution errors with machine-parseable code prefixes.
+/// Errors returned by command handlers.
 #[derive(Debug, thiserror::Error)]
 pub enum CommandError {
-    #[error("DENIED {reason}")]
+    #[error("not found")]
+    NotFound,
+
+    #[error("namespace not found: {0}")]
+    NamespaceNotFound(String),
+
+    #[error("namespace already exists: {0}")]
+    NamespaceExists(String),
+
+    #[error("namespace not empty: {0}")]
+    NamespaceNotEmpty(String),
+
+    #[error("version not found: {0}")]
+    VersionNotFound(u64),
+
+    #[error("validation failed: {0}")]
+    ValidationFailed(String),
+
+    #[error("permission denied: {reason}")]
     Denied { reason: String },
 
-    #[error("NOTFOUND {entity}: {id}")]
-    NotFound { entity: String, id: String },
+    #[error("not authenticated")]
+    NotAuthenticated,
 
-    #[error("BADARG {message}")]
-    BadArg { message: String },
-
-    #[error("VALIDATION_ERROR {0}")]
-    ValidationError(String),
-
-    #[error("WRONGTYPE keyspace={keyspace} type={actual} expected={expected}")]
-    WrongType {
-        keyspace: String,
-        actual: String,
-        expected: String,
-    },
-
-    #[error("STATE_ERROR from={from} to={to}")]
-    StateError { from: String, to: String },
-
-    #[error("EXPIRED {entity}: {id}")]
-    Expired { entity: String, id: String },
-
-    #[error("REUSE_DETECTED family={family_id}")]
-    ReuseDetected { family_id: String },
-
-    #[error("CHAIN_LIMIT family={family_id} limit={limit}")]
-    ChainLimit { family_id: String, limit: u32 },
-
-    #[error("DISABLED keyspace={keyspace}")]
-    Disabled { keyspace: String },
-
-    #[error("NOTREADY {0}")]
+    #[error("not ready: server is in {0} state")]
     NotReady(String),
 
-    #[error("STORAGE {0}")]
-    Storage(#[from] shroudb_storage::StorageError),
+    #[error("bad argument: {message}")]
+    BadArg { message: String },
 
-    #[error("CRYPTO {0}")]
-    Crypto(#[from] shroudb_crypto::CryptoError),
+    #[error("pipeline aborted: command {index} failed: {reason}")]
+    PipelineAborted { index: usize, reason: String },
 
-    #[error("LOCKED account temporarily locked, retry_after={retry_after_secs}")]
-    Locked { retry_after_secs: u64 },
+    #[error("store error: {0}")]
+    Store(#[from] shroudb_store::StoreError),
 
-    #[error("EXISTS {entity}: {name}")]
-    AlreadyExists { entity: String, name: String },
-
-    #[error("INTERNAL {0}")]
+    #[error("internal error: {0}")]
     Internal(String),
 }

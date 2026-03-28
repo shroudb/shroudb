@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use metrics::gauge;
-use shroudb_protocol::auth::AuthPolicy;
+use shroudb_acl::{AuthContext, TokenValidator};
 use shroudb_protocol::resp3::Resp3Frame;
 use shroudb_protocol::resp3::parse_command::parse_command;
 use shroudb_protocol::resp3::reader::read_frame;
@@ -10,8 +10,8 @@ use shroudb_protocol::resp3::serialize::response_to_frame;
 use shroudb_protocol::resp3::writer::write_frame;
 use shroudb_protocol::response::{ResponseMap, ResponseValue};
 use shroudb_protocol::{CommandDispatcher, CommandResponse};
+use shroudb_store::Store;
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tokio::sync::broadcast;
 use tokio::sync::watch;
 
 /// RAII guard that decrements the concurrent connections gauge on drop.
@@ -24,20 +24,17 @@ impl Drop for ConnectionGuard {
 }
 
 /// Simple token-bucket rate limiter for per-connection command throttling.
-///
-/// NOTE: currently scoped per-connection only. Multi-tenant deployments
-/// would need a shared pool keyed by `(tenant_id, source_ip)`.
 struct RateLimiter {
     tokens: f64,
     max_tokens: f64,
-    refill_rate: f64, // tokens per second
+    refill_rate: f64,
     last_refill: Instant,
 }
 
 impl RateLimiter {
     fn new(max_tokens: f64, refill_rate: f64) -> Self {
         Self {
-            tokens: max_tokens,
+            tokens: 1.0, // Start with 1 token, not max — prevents burst after idle
             max_tokens,
             refill_rate,
             last_refill: Instant::now(),
@@ -60,9 +57,11 @@ impl RateLimiter {
 }
 
 /// Handle a single client connection: read frames, dispatch commands, write responses.
-pub async fn handle_connection(
+pub async fn handle_connection<S: Store, V: TokenValidator>(
     stream: impl tokio::io::AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    dispatcher: Arc<CommandDispatcher>,
+    dispatcher: Arc<CommandDispatcher<S>>,
+    token_validator: Arc<V>,
+    auth_required: bool,
     mut shutdown_rx: watch::Receiver<bool>,
     rate_limit: Option<u32>,
 ) {
@@ -73,14 +72,19 @@ pub async fn handle_connection(
     let mut reader = BufReader::new(reader_half);
     let mut writer = BufWriter::new(writer_half);
 
-    // Per-connection auth state
-    let mut auth: Option<AuthPolicy> = None;
+    // Per-connection auth state.
+    // When auth is not required, give every connection a platform context
+    // so ACL checks in the dispatcher pass.
+    let mut auth: Option<AuthContext> = if auth_required {
+        None
+    } else {
+        Some(AuthContext::platform("default", "anonymous"))
+    };
 
-    // Per-connection rate limiter (if configured)
+    // Per-connection rate limiter
     let mut rate_limiter = rate_limit.map(|limit| RateLimiter::new(limit as f64, limit as f64));
 
     loop {
-        // Check shutdown before blocking on the next frame.
         let frame = tokio::select! {
             biased;
             _ = shutdown_rx.changed() => {
@@ -96,41 +100,33 @@ pub async fn handle_connection(
         let frame = match frame {
             Ok(Some(f)) => f,
             Ok(None) => {
-                // Clean EOF
                 tracing::debug!("client disconnected (EOF)");
                 break;
             }
             Err(e) => {
                 tracing::warn!(error = %e, "protocol error reading frame");
-                // Send an error back if possible, then close.
-                let err_frame =
-                    shroudb_protocol::Resp3Frame::SimpleError(format!("ERR protocol: {e}"));
+                let err_frame = Resp3Frame::SimpleError(format!("ERR protocol: {e}"));
                 if let Err(we) = write_frame(&mut writer, &err_frame).await {
                     tracing::debug!(error = %we, "failed to write error response");
                 }
-                if let Err(fe) = writer.flush().await {
-                    tracing::debug!(error = %fe, "failed to flush error response");
-                }
+                let _ = writer.flush().await;
                 break;
             }
         };
 
-        // Parse the frame into a Command.
         let command = match parse_command(frame) {
             Ok(cmd) => cmd,
             Err(e) => {
-                let err_frame = shroudb_protocol::Resp3Frame::SimpleError(format!("ERR {e}"));
+                let err_frame = Resp3Frame::SimpleError(format!("ERR {e}"));
                 if write_frame(&mut writer, &err_frame).await.is_err() {
                     break;
                 }
-                if writer.flush().await.is_err() {
-                    break;
-                }
+                let _ = writer.flush().await;
                 continue;
             }
         };
 
-        // Check rate limit before dispatching.
+        // Rate limit check
         if let Some(ref mut limiter) = rate_limiter
             && !limiter.try_acquire()
         {
@@ -141,67 +137,74 @@ pub async fn handle_connection(
             if write_frame(&mut writer, &response_frame).await.is_err() {
                 break;
             }
-            if writer.flush().await.is_err() {
-                break;
-            }
+            let _ = writer.flush().await;
             continue;
         }
 
-        // Handle AUTH command at the connection level
+        // Handle AUTH at connection level
         if let shroudb_protocol::Command::Auth { ref token } = command {
-            let response = match dispatcher.auth_registry().authenticate(token) {
-                Ok(policy) => {
-                    auth = Some(policy.clone());
+            let response = match token_validator.validate(token) {
+                Ok(parsed_token) => {
+                    let ctx = parsed_token.into_context();
+                    let actor = ctx.actor.clone();
+                    auth = Some(ctx);
                     CommandResponse::Success(
-                        ResponseMap::ok()
-                            .with("policy", ResponseValue::String(policy.name.clone())),
+                        ResponseMap::ok().with("actor", ResponseValue::String(actor)),
                     )
                 }
-                Err(e) => CommandResponse::Error(e),
+                Err(e) => CommandResponse::Error(shroudb_protocol::CommandError::Denied {
+                    reason: e.to_string(),
+                }),
             };
             let response_frame = response_to_frame(&response);
             if write_frame(&mut writer, &response_frame).await.is_err() {
-                tracing::debug!("write error, closing connection");
                 break;
             }
-            if writer.flush().await.is_err() {
-                tracing::debug!("flush error, closing connection");
-                break;
-            }
+            let _ = writer.flush().await;
             continue;
         }
 
-        // Handle SUBSCRIBE at the connection level — enter subscription mode.
-        if let shroudb_protocol::Command::Subscribe { ref channel } = command {
-            // Send an initial confirmation.
-            let confirm = CommandResponse::Success(
-                ResponseMap::ok()
-                    .with(
-                        "message",
-                        ResponseValue::String(format!("subscribed to {channel}")),
-                    )
-                    .with("channel", ResponseValue::String(channel.clone())),
-            );
-            let confirm_frame = response_to_frame(&confirm);
-            if write_frame(&mut writer, &confirm_frame).await.is_err() {
+        // Pre-auth: only PING and AUTH are allowed
+        if auth_required && auth.is_none() && !matches!(command, shroudb_protocol::Command::Ping) {
+            let response = CommandResponse::Error(shroudb_protocol::CommandError::NotAuthenticated);
+            let response_frame = response_to_frame(&response);
+            if write_frame(&mut writer, &response_frame).await.is_err() {
                 break;
             }
-            if writer.flush().await.is_err() {
-                break;
-            }
-
-            // Enter subscription streaming loop.
-            let channel = channel.clone();
-            handle_subscription(&mut writer, &dispatcher, &mut shutdown_rx, &channel).await;
-
-            // After subscription ends, go back to the command loop.
+            let _ = writer.flush().await;
             continue;
         }
 
-        // Execute the command.
+        // Check token expiry — fail closed on clock error
+        if let Some(ref ctx) = auth {
+            let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                Ok(d) => d.as_secs(),
+                Err(_) => {
+                    let response = CommandResponse::Error(
+                        shroudb_protocol::CommandError::Internal("system clock error".into()),
+                    );
+                    let response_frame = response_to_frame(&response);
+                    let _ = write_frame(&mut writer, &response_frame).await;
+                    let _ = writer.flush().await;
+                    break;
+                }
+            };
+            if ctx.is_expired(now) {
+                auth = None;
+                let response =
+                    CommandResponse::Error(shroudb_protocol::CommandError::NotAuthenticated);
+                let response_frame = response_to_frame(&response);
+                if write_frame(&mut writer, &response_frame).await.is_err() {
+                    break;
+                }
+                let _ = writer.flush().await;
+                continue;
+            }
+        }
+
+        // Dispatch
         let response = dispatcher.execute(command, auth.as_ref()).await;
 
-        // Serialize and write the response frame.
         let response_frame = response_to_frame(&response);
         if write_frame(&mut writer, &response_frame).await.is_err() {
             tracing::debug!("write error, closing connection");
@@ -210,61 +213,6 @@ pub async fn handle_connection(
         if writer.flush().await.is_err() {
             tracing::debug!("flush error, closing connection");
             break;
-        }
-    }
-}
-
-/// Handle subscription mode: stream lifecycle events to the client until
-/// shutdown or disconnect.
-async fn handle_subscription(
-    writer: &mut (impl AsyncWrite + Unpin),
-    dispatcher: &CommandDispatcher,
-    shutdown_rx: &mut watch::Receiver<bool>,
-    channel: &str,
-) {
-    let mut rx = dispatcher.event_bus().subscribe();
-
-    loop {
-        tokio::select! {
-            biased;
-            _ = shutdown_rx.changed() => {
-                if *shutdown_rx.borrow() {
-                    tracing::debug!("subscription ending due to shutdown");
-                    break;
-                }
-            }
-            event = rx.recv() => {
-                match event {
-                    Ok(evt) if evt.keyspace == channel || channel == "*" => {
-                        // Encode the event as a RESP3 array:
-                        // ["event", event_type, keyspace, detail, timestamp]
-                        let frame = Resp3Frame::Array(vec![
-                            Resp3Frame::BulkString(b"event".to_vec()),
-                            Resp3Frame::BulkString(evt.event_type.into_bytes()),
-                            Resp3Frame::BulkString(evt.keyspace.into_bytes()),
-                            Resp3Frame::BulkString(evt.detail.into_bytes()),
-                            Resp3Frame::Integer(evt.timestamp as i64),
-                        ]);
-                        if write_frame(writer, &frame).await.is_err() {
-                            tracing::debug!("write error in subscription, ending");
-                            break;
-                        }
-                        if tokio::io::AsyncWriteExt::flush(writer).await.is_err() {
-                            tracing::debug!("flush error in subscription, ending");
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(lagged = n, "subscription lagged, some events dropped");
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        tracing::debug!("event bus closed, ending subscription");
-                        break;
-                    }
-                    _ => continue, // Event for a different channel
-                }
-            }
         }
     }
 }

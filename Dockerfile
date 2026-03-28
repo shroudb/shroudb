@@ -25,7 +25,7 @@ FROM alpine:3.21 AS shroudb
 RUN adduser -D -u 65532 shroudb && \
     mkdir /data && chown shroudb:shroudb /data
 LABEL org.opencontainers.image.title="ShrouDB" \
-      org.opencontainers.image.description="Encrypted credential vault with key rotation, RESP3 protocol, and WAL storage" \
+      org.opencontainers.image.description="Encrypted key-value database with namespaces, versioning, and RESP3 protocol" \
       org.opencontainers.image.vendor="ShrouDB" \
       org.opencontainers.image.url="https://github.com/shroudb/shroudb" \
       org.opencontainers.image.source="https://github.com/shroudb/shroudb" \
@@ -41,7 +41,7 @@ ENTRYPOINT ["/shroudb"]
 FROM alpine:3.21 AS shroudb-cli
 RUN adduser -D -u 65532 shroudb
 LABEL org.opencontainers.image.title="ShrouDB CLI" \
-      org.opencontainers.image.description="Command-line client for ShrouDB credential vault" \
+      org.opencontainers.image.description="Command-line client for ShrouDB encrypted key-value database" \
       org.opencontainers.image.vendor="ShrouDB" \
       org.opencontainers.image.url="https://github.com/shroudb/shroudb" \
       org.opencontainers.image.source="https://github.com/shroudb/shroudb" \

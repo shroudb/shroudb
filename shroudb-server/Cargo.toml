@@ -10,10 +10,15 @@ name = "shroudb"
 path = "src/main.rs"
 
 [dependencies]
-shroudb-core.workspace = true
-shroudb-crypto.workspace = true
+shroudb-acl.workspace = true
 shroudb-protocol.workspace = true
+shroudb-store.workspace = true
+
+# These will be replaced with shroudb-storage from registry once published for v1
+# For now, use path override via .cargo/config.toml during development
+shroudb-crypto.workspace = true
 shroudb-storage.workspace = true
+ring.workspace = true
 
 tokio.workspace = true
 clap.workspace = true
@@ -23,15 +28,12 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
-ring.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
 tokio-rustls.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 hex.workspace = true
-postcard.workspace = true
-uuid.workspace = true
 libc.workspace = true
 
 [dev-dependencies]

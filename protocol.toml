@@ -1,17 +1,15 @@
 # ShrouDB Protocol Specification
 #
-# Machine-readable definition of the ShrouDB protocol.
+# Machine-readable definition of the ShrouDB v1 protocol.
 # Used by shroudb-codegen to generate typed client libraries in any language.
-#
-# Analogous to an OpenAPI spec, but for ShrouDB's command protocol.
 
 [protocol]
 name = "shroudb"
-version = "0.1.0"
-description = "Credential management server"
+version = "1.0.0"
+description = "Encrypted key-value database"
 default_port = 6399
 uri_schemes = ["shroudb://", "shroudb+tls://"]
-uri_format = "{scheme}[token@]host[:port][/keyspace]"
+uri_format = "{scheme}[token@]host[:port]"
 
 [protocol.wire_format]
 type = "resp3"
@@ -23,1349 +21,405 @@ success_status_value = "OK"
 
 # ─── Error codes ──────────────────────────────────────────────────────────────
 
-[error_codes]
+[error_codes.NOT_FOUND]
+description = "Key or resource does not exist"
+http_equiv = 404
+
+[error_codes.NAMESPACE_NOT_FOUND]
+description = "Namespace does not exist"
+http_equiv = 404
+
+[error_codes.NAMESPACE_EXISTS]
+description = "Namespace already exists"
+http_equiv = 409
+
+[error_codes.NAMESPACE_NOT_EMPTY]
+description = "Namespace is not empty (use FORCE to override)"
+http_equiv = 409
+
+[error_codes.VERSION_NOT_FOUND]
+description = "Requested version does not exist"
+http_equiv = 404
+
+[error_codes.VALIDATION_FAILED]
+description = "Metadata validation failed against namespace schema"
+http_equiv = 422
 
 [error_codes.DENIED]
 description = "Authentication required or insufficient permissions"
 http_equiv = 401
 
-[error_codes.NOTFOUND]
-description = "Credential, keyspace, or resource does not exist"
-http_equiv = 404
+[error_codes.NOT_AUTHENTICATED]
+description = "No auth token provided on this connection"
+http_equiv = 401
 
-[error_codes.BADARG]
+[error_codes.NOT_READY]
+description = "Server is not in READY state"
+http_equiv = 503
+
+[error_codes.BAD_ARG]
 description = "Missing or malformed command argument"
 http_equiv = 400
 
-[error_codes.VALIDATION_ERROR]
-description = "Metadata or claims failed schema validation"
-http_equiv = 422
-
-[error_codes.WRONGTYPE]
-description = "Operation not supported for this keyspace type"
-http_equiv = 400
-
-[error_codes.STATE_ERROR]
-description = "Credential is in wrong state for this operation"
+[error_codes.PIPELINE_ABORTED]
+description = "Pipeline command failed, all commands rolled back"
 http_equiv = 409
 
-[error_codes.EXPIRED]
-description = "Credential has expired"
-http_equiv = 410
+# ─── Connection commands ──────────────────────────────────────────────────────
 
-[error_codes.REUSE_DETECTED]
-description = "Refresh token reuse detected — family revoked"
-http_equiv = 409
+[commands.AUTH]
+description = "Authenticate the connection with a token"
+acl = "none"
 
-[error_codes.CHAIN_LIMIT]
-description = "Refresh token chain limit exceeded"
-http_equiv = 429
-
-[error_codes.DISABLED]
-description = "Keyspace is disabled"
-http_equiv = 503
-
-[error_codes.NOTREADY]
-description = "Server is not ready (still starting up)"
-http_equiv = 503
-
-[error_codes.STORAGE]
-description = "Storage engine error"
-http_equiv = 500
-
-[error_codes.CRYPTO]
-description = "Cryptographic operation failed"
-http_equiv = 500
-
-[error_codes.LOCKED]
-description = "Account temporarily locked due to too many failed attempts"
-http_equiv = 429
-
-[error_codes.INTERNAL]
-description = "Unexpected internal error"
-http_equiv = 500
-
-# ─── Types ────────────────────────────────────────────────────────────────────
-
-[types.keyspace]
-description = "Keyspace name (alphanumeric + hyphens)"
-wire_type = "bulk_string"
-rust_type = "String"
-python_type = "str"
-typescript_type = "string"
-
-[types.credential_id]
-description = "Unique credential identifier"
-wire_type = "bulk_string"
-rust_type = "String"
-python_type = "str"
-typescript_type = "string"
-
-[types.token]
-description = "Bearer token, API key, or refresh token"
-wire_type = "bulk_string"
-rust_type = "String"
-python_type = "str"
-typescript_type = "string"
-
-[types.json_value]
-description = "JSON-encoded object"
-wire_type = "bulk_string"
-rust_type = "serde_json::Value"
-python_type = "dict[str, Any]"
-typescript_type = "Record<string, unknown>"
-
-[types.integer]
-description = "64-bit signed integer"
-wire_type = "integer"
-rust_type = "i64"
-python_type = "int"
-typescript_type = "number"
-
-[types.boolean_flag]
-description = "Presence flag (no value)"
-wire_type = "flag"
-rust_type = "bool"
-python_type = "bool"
-typescript_type = "boolean"
-
-[types.unix_timestamp]
-description = "Unix timestamp in seconds"
-wire_type = "integer"
-rust_type = "u64"
-python_type = "int"
-typescript_type = "number"
-
-# ─── Commands ─────────────────────────────────────────────────────────────────
-
-# ── ISSUE ─────────────────────────────────────────────────────────────────────
-
-[commands.issue]
-verb = "ISSUE"
-description = "Issue a new credential in the given keyspace"
-replica_behavior = "write"
-
-[[commands.issue.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.issue.params]]
-name = "claims"
-type = "json_value"
-required = false
-key = "CLAIMS"
-description = "JWT claims object (JWT keyspaces only)"
-
-[[commands.issue.params]]
-name = "metadata"
-type = "json_value"
-required = false
-key = "META"
-description = "Metadata to attach to the credential"
-
-[[commands.issue.params]]
-name = "ttl_secs"
-type = "integer"
-required = false
-key = "TTL"
-description = "Time-to-live in seconds"
-
-[[commands.issue.params]]
-name = "idempotency_key"
-type = "token"
-required = false
-key = "IDEMPOTENCY_KEY"
-description = "Prevents duplicate issuance within 5 min"
-
-[[commands.issue.response]]
-name = "credential_id"
-type = "credential_id"
-description = "Unique credential identifier"
-
-[[commands.issue.response]]
+[[commands.AUTH.params]]
 name = "token"
-type = "token"
-description = "The issued token/key"
-
-[[commands.issue.response]]
-name = "expires_at"
-type = "unix_timestamp"
-optional = true
-description = "Expiration timestamp (if TTL set)"
-
-[[commands.issue.response]]
-name = "family_id"
-type = "credential_id"
-optional = true
-description = "Refresh token family ID (refresh_token keyspaces only)"
-
-[[commands.issue.errors]]
-code = "BADARG"
-condition = "Missing keyspace, invalid JSON, invalid TTL"
-
-[[commands.issue.errors]]
-code = "VALIDATION_ERROR"
-condition = "Claims or metadata fail schema validation"
-
-[[commands.issue.errors]]
-code = "WRONGTYPE"
-condition = "CLAIMS used on non-JWT keyspace"
-
-[[commands.issue.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-[[commands.issue.errors]]
-code = "STORAGE"
-condition = "WAL write failed"
-
-# ── VERIFY ────────────────────────────────────────────────────────────────────
-
-[commands.verify]
-verb = "VERIFY"
-description = "Verify a credential (JWT, API key, or HMAC signature)"
-replica_behavior = "observational_read"
-
-[[commands.verify.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.verify.params]]
-name = "token"
-type = "token"
-required = true
-position = 2
-description = "The token/key/signature to verify"
-
-[[commands.verify.params]]
-name = "payload"
-type = "token"
-required = false
-key = "PAYLOAD"
-description = "Original message for HMAC verification"
-
-[[commands.verify.params]]
-name = "check_revoked"
-type = "boolean_flag"
-required = false
-key = "CHECKREV"
-description = "Also check the revocation index"
-
-[[commands.verify.response]]
-name = "credential_id"
-type = "credential_id"
-description = "Credential identifier"
-
-[[commands.verify.response]]
-name = "claims"
-type = "json_value"
-optional = true
-description = "Decoded JWT claims (JWT keyspaces only)"
-
-[[commands.verify.response]]
-name = "meta"
-type = "json_value"
-optional = true
-description = "Attached metadata"
-
-[[commands.verify.response]]
-name = "state"
-type = "token"
-description = "Credential state (active, suspended)"
-
-[[commands.verify.errors]]
-code = "BADARG"
-condition = "Missing keyspace or token"
-
-[[commands.verify.errors]]
-code = "NOTFOUND"
-condition = "Credential does not exist"
-
-[[commands.verify.errors]]
-code = "EXPIRED"
-condition = "Credential has expired"
-
-[[commands.verify.errors]]
-code = "STATE_ERROR"
-condition = "Credential is suspended or revoked"
-
-[[commands.verify.errors]]
-code = "WRONGTYPE"
-condition = "PAYLOAD used on non-HMAC keyspace"
-
-[[commands.verify.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-[[commands.verify.errors]]
-code = "CRYPTO"
-condition = "Signature verification failed"
-
-# ── REVOKE ────────────────────────────────────────────────────────────────────
-
-[commands.revoke]
-verb = "REVOKE"
-description = "Revoke a credential by ID"
-replica_behavior = "write"
-
-[[commands.revoke.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.revoke.params]]
-name = "credential_id"
-type = "credential_id"
-required = true
-position = 2
-description = "Credential to revoke"
-
-[[commands.revoke.response]]
-name = "revoked"
-type = "integer"
-optional = true
-description = "Number of credentials revoked"
-
-[[commands.revoke.errors]]
-code = "BADARG"
-condition = "Missing keyspace or credential ID"
-
-[[commands.revoke.errors]]
-code = "NOTFOUND"
-condition = "Credential does not exist"
-
-[[commands.revoke.errors]]
-code = "STATE_ERROR"
-condition = "Already revoked"
-
-[[commands.revoke.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-[[commands.revoke.errors]]
-code = "STORAGE"
-condition = "WAL write failed"
-
-# ── REVOKE FAMILY ─────────────────────────────────────────────────────────────
-
-[commands.revoke_family]
-verb = "REVOKE"
-description = "Revoke all credentials in a refresh token family"
-replica_behavior = "write"
-variant = "family"
-
-[[commands.revoke_family.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.revoke_family.params]]
-name = "family_id"
-type = "credential_id"
-required = true
-key = "FAMILY"
-description = "Family ID to revoke"
-
-[[commands.revoke_family.response]]
-name = "revoked"
-type = "integer"
-description = "Number of credentials revoked"
-
-[[commands.revoke_family.errors]]
-code = "NOTFOUND"
-condition = "Family does not exist"
-
-[[commands.revoke_family.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── REVOKE BULK ───────────────────────────────────────────────────────────────
-
-[commands.revoke_bulk]
-verb = "REVOKE"
-description = "Bulk-revoke multiple credentials"
-replica_behavior = "write"
-variant = "bulk"
-
-[[commands.revoke_bulk.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.revoke_bulk.params]]
-name = "ids"
-type = "credential_id"
-required = true
-key = "BULK"
-variadic = true
-description = "Credential IDs to revoke"
-
-[[commands.revoke_bulk.response]]
-name = "revoked"
-type = "integer"
-description = "Number of credentials revoked"
-
-[[commands.revoke_bulk.errors]]
-code = "BADARG"
-condition = "No IDs provided"
-
-[[commands.revoke_bulk.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── REFRESH ───────────────────────────────────────────────────────────────────
-
-[commands.refresh]
-verb = "REFRESH"
-description = "Exchange a refresh token for a new one"
-replica_behavior = "write"
-
-[[commands.refresh.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.refresh.params]]
-name = "token"
-type = "token"
-required = true
-position = 2
-description = "Current refresh token"
-
-[[commands.refresh.response]]
-name = "credential_id"
-type = "credential_id"
-description = "New credential identifier"
-
-[[commands.refresh.response]]
-name = "token"
-type = "token"
-description = "New refresh token"
-
-[[commands.refresh.response]]
-name = "family_id"
-type = "credential_id"
-description = "Family ID (unchanged)"
-
-[[commands.refresh.response]]
-name = "expires_at"
-type = "unix_timestamp"
-description = "New token expiration"
-
-[[commands.refresh.errors]]
-code = "BADARG"
-condition = "Missing keyspace or token"
-
-[[commands.refresh.errors]]
-code = "NOTFOUND"
-condition = "Token does not exist"
-
-[[commands.refresh.errors]]
-code = "EXPIRED"
-condition = "Token has expired"
-
-[[commands.refresh.errors]]
-code = "REUSE_DETECTED"
-condition = "Token already consumed (family revoked)"
-
-[[commands.refresh.errors]]
-code = "CHAIN_LIMIT"
-condition = "Refresh chain exceeded configured limit"
-
-[[commands.refresh.errors]]
-code = "WRONGTYPE"
-condition = "Keyspace is not refresh_token type"
-
-[[commands.refresh.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── UPDATE ────────────────────────────────────────────────────────────────────
-
-[commands.update]
-verb = "UPDATE"
-description = "Update metadata on an existing credential"
-replica_behavior = "write"
-
-[[commands.update.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.update.params]]
-name = "credential_id"
-type = "credential_id"
-required = true
-position = 2
-description = "Credential to update"
-
-[[commands.update.params]]
-name = "metadata"
-type = "json_value"
-required = true
-key = "META"
-description = "Metadata fields to merge"
-
-[[commands.update.errors]]
-code = "BADARG"
-condition = "Missing arguments or invalid JSON"
-
-[[commands.update.errors]]
-code = "NOTFOUND"
-condition = "Credential does not exist"
-
-[[commands.update.errors]]
-code = "VALIDATION_ERROR"
-condition = "Metadata fails schema validation"
-
-[[commands.update.errors]]
-code = "STATE_ERROR"
-condition = "Credential is revoked"
-
-[[commands.update.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── INSPECT ───────────────────────────────────────────────────────────────────
-
-[commands.inspect]
-verb = "INSPECT"
-description = "Retrieve full details about a credential"
-replica_behavior = "pure_read"
-
-[[commands.inspect.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.inspect.params]]
-name = "credential_id"
-type = "credential_id"
-required = true
-position = 2
-description = "Credential to inspect"
-
-[[commands.inspect.response]]
-name = "credential_id"
-type = "credential_id"
-description = "Credential identifier"
-
-[[commands.inspect.response]]
-name = "state"
-type = "token"
-description = "active, suspended, or revoked"
-
-[[commands.inspect.response]]
-name = "created_at"
-type = "unix_timestamp"
-description = "Creation timestamp"
-
-[[commands.inspect.response]]
-name = "expires_at"
-type = "unix_timestamp"
-optional = true
-description = "Expiration timestamp"
-
-[[commands.inspect.response]]
-name = "last_verified_at"
-type = "unix_timestamp"
-optional = true
-description = "Last verification timestamp"
-
-[[commands.inspect.response]]
-name = "meta"
-type = "json_value"
-optional = true
-description = "Attached metadata"
-
-[[commands.inspect.response]]
-name = "family_id"
-type = "credential_id"
-optional = true
-description = "Family ID (refresh_token only)"
-
-[[commands.inspect.errors]]
-code = "BADARG"
-condition = "Missing arguments"
-
-[[commands.inspect.errors]]
-code = "NOTFOUND"
-condition = "Credential does not exist"
-
-[[commands.inspect.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── ROTATE ────────────────────────────────────────────────────────────────────
-
-[commands.rotate]
-verb = "ROTATE"
-description = "Trigger signing key rotation for a keyspace"
-replica_behavior = "write"
-
-[[commands.rotate.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.rotate.params]]
-name = "force"
-type = "boolean_flag"
-required = false
-key = "FORCE"
-description = "Rotate even if current key has not reached rotation age"
-
-[[commands.rotate.params]]
-name = "nowait"
-type = "boolean_flag"
-required = false
-key = "NOWAIT"
-description = "Return immediately without waiting"
-
-[[commands.rotate.params]]
-name = "dryrun"
-type = "boolean_flag"
-required = false
-key = "DRYRUN"
-description = "Preview without making changes"
-
-[[commands.rotate.response]]
-name = "new_key_id"
-type = "token"
-description = "ID of the newly created key"
-
-[[commands.rotate.response]]
-name = "old_key_id"
-type = "token"
-description = "ID of the key that entered drain mode"
-
-[[commands.rotate.response]]
-name = "dryrun"
-type = "token"
-optional = true
-description = "'true' if this was a dry run"
-
-[[commands.rotate.errors]]
-code = "BADARG"
-condition = "Missing keyspace"
-
-[[commands.rotate.errors]]
-code = "WRONGTYPE"
-condition = "Keyspace does not support rotation"
-
-[[commands.rotate.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-[[commands.rotate.errors]]
-code = "STORAGE"
-condition = "WAL write failed"
-
-# ── JWKS ──────────────────────────────────────────────────────────────────────
-
-[commands.jwks]
-verb = "JWKS"
-description = "Return the JSON Web Key Set for a JWT keyspace"
-replica_behavior = "pure_read"
-
-[[commands.jwks.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target JWT keyspace"
-
-[[commands.jwks.response]]
-name = "keys"
-type = "json_value"
-description = "Array of JWK objects (RFC 7517 §5)"
-
-[[commands.jwks.errors]]
-code = "BADARG"
-condition = "Missing keyspace"
-
-[[commands.jwks.errors]]
-code = "WRONGTYPE"
-condition = "Keyspace is not JWT type"
-
-[[commands.jwks.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── KEYSTATE ──────────────────────────────────────────────────────────────────
-
-[commands.keystate]
-verb = "KEYSTATE"
-description = "Show the current key ring state for a keyspace"
-replica_behavior = "pure_read"
-
-[[commands.keystate.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace"
-
-[[commands.keystate.response]]
-name = "keys"
-type = "json_value"
-description = "Array of key info maps (key_id, state, created_at)"
-
-[[commands.keystate.errors]]
-code = "BADARG"
-condition = "Missing keyspace"
-
-[[commands.keystate.errors]]
-code = "WRONGTYPE"
-condition = "Keyspace does not have a key ring"
-
-[[commands.keystate.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── HEALTH ────────────────────────────────────────────────────────────────────
-
-[commands.health]
-verb = "HEALTH"
-description = "Check server or keyspace health"
-replica_behavior = "pure_read"
-
-[[commands.health.params]]
-name = "keyspace"
-type = "keyspace"
-required = false
-position = 1
-description = "Check a specific keyspace (omit for server-level)"
-
-[[commands.health.response]]
-name = "state"
-type = "token"
-optional = true
-description = "Engine state (e.g. 'ready')"
-
-[[commands.health.response]]
-name = "keyspaces"
-type = "json_value"
-optional = true
-description = "Per-keyspace credential counts"
-
-[[commands.health.response]]
-name = "count"
-type = "integer"
-optional = true
-description = "Credential count (keyspace-level)"
-
-[[commands.health.errors]]
-code = "NOTFOUND"
-condition = "Specified keyspace does not exist"
-
-[[commands.health.errors]]
-code = "NOTREADY"
-condition = "Server is still starting up"
-
-# ── KEYS ──────────────────────────────────────────────────────────────────────
-
-[commands.keys]
-verb = "KEYS"
-description = "List credential IDs with optional filtering and pagination"
-replica_behavior = "pure_read"
-
-[[commands.keys.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.keys.params]]
-name = "cursor"
-type = "token"
-required = false
-key = "CURSOR"
-description = "Resume from a previous scan cursor"
-
-[[commands.keys.params]]
-name = "pattern"
-type = "token"
-required = false
-key = "MATCH"
-description = "Glob-style pattern to filter credential IDs"
-
-[[commands.keys.params]]
-name = "state_filter"
-type = "token"
-required = false
-key = "STATE"
-description = "Filter by state: active, suspended, revoked"
-
-[[commands.keys.params]]
-name = "count"
-type = "integer"
-required = false
-key = "COUNT"
-description = "Max results to return (default: 100)"
-
-[[commands.keys.response]]
-name = "cursor"
-type = "token"
-description = "Cursor for next page ('0' when complete)"
-
-[[commands.keys.response]]
-name = "keys"
-type = "json_value"
-description = "Array of credential ID strings"
-
-[[commands.keys.errors]]
-code = "BADARG"
-condition = "Missing keyspace, invalid COUNT or STATE"
-
-[[commands.keys.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── SUSPEND ───────────────────────────────────────────────────────────────────
-
-[commands.suspend]
-verb = "SUSPEND"
-description = "Temporarily suspend a credential"
-replica_behavior = "write"
-
-[[commands.suspend.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.suspend.params]]
-name = "credential_id"
-type = "credential_id"
-required = true
-position = 2
-description = "Credential to suspend"
-
-[[commands.suspend.errors]]
-code = "BADARG"
-condition = "Missing arguments"
-
-[[commands.suspend.errors]]
-code = "NOTFOUND"
-condition = "Credential does not exist"
-
-[[commands.suspend.errors]]
-code = "STATE_ERROR"
-condition = "Already suspended or revoked"
-
-[[commands.suspend.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── UNSUSPEND ─────────────────────────────────────────────────────────────────
-
-[commands.unsuspend]
-verb = "UNSUSPEND"
-description = "Reactivate a previously suspended credential"
-replica_behavior = "write"
-
-[[commands.unsuspend.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace name"
-
-[[commands.unsuspend.params]]
-name = "credential_id"
-type = "credential_id"
-required = true
-position = 2
-description = "Credential to unsuspend"
-
-[[commands.unsuspend.errors]]
-code = "BADARG"
-condition = "Missing arguments"
-
-[[commands.unsuspend.errors]]
-code = "NOTFOUND"
-condition = "Credential does not exist"
-
-[[commands.unsuspend.errors]]
-code = "STATE_ERROR"
-condition = "Credential is not suspended"
-
-[[commands.unsuspend.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── SCHEMA ────────────────────────────────────────────────────────────────────
-
-[commands.schema]
-verb = "SCHEMA"
-description = "Display the metadata schema for a keyspace"
-replica_behavior = "pure_read"
-
-[[commands.schema.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target keyspace"
-
-[[commands.schema.response]]
-name = "schema"
-type = "json_value"
-description = "Schema definition (fields, types, constraints)"
-
-[[commands.schema.errors]]
-code = "BADARG"
-condition = "Missing keyspace"
-
-[[commands.schema.errors]]
-code = "NOTFOUND"
-condition = "Keyspace does not exist"
-
-[[commands.schema.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── AUTH ──────────────────────────────────────────────────────────────────────
-
-[commands.auth]
-verb = "AUTH"
-description = "Authenticate the current connection"
-replica_behavior = "pure_read"
-simple_response = true
-
-[[commands.auth.params]]
-name = "token"
-type = "token"
-required = true
-position = 1
-description = "Authentication token"
-
-[[commands.auth.errors]]
-code = "DENIED"
-condition = "Invalid or expired token"
-
-# ── CONFIG GET ────────────────────────────────────────────────────────────────
-
-[commands.config_get]
-verb = "CONFIG"
-subcommand = "GET"
-description = "Retrieve a runtime configuration value"
-replica_behavior = "pure_read"
-
-[[commands.config_get.params]]
-name = "key"
-type = "token"
-required = true
-position = 1
-description = "Configuration key name"
-
-[[commands.config_get.response]]
-name = "value"
-type = "token"
-description = "Current config value"
-
-[[commands.config_get.errors]]
-code = "BADARG"
-condition = "Missing key"
-
-[[commands.config_get.errors]]
-code = "NOTFOUND"
-condition = "Unknown configuration key"
-
-[[commands.config_get.errors]]
-code = "DENIED"
-condition = "Authentication required"
-
-# ── CONFIG SET ────────────────────────────────────────────────────────────────
-
-[commands.config_set]
-verb = "CONFIG"
-subcommand = "SET"
-description = "Set a runtime configuration value"
-replica_behavior = "write"
-simple_response = true
-
-[[commands.config_set.params]]
-name = "key"
-type = "token"
-required = true
-position = 1
-description = "Configuration key name"
-
-[[commands.config_set.params]]
-name = "value"
-type = "token"
-required = true
-position = 2
-description = "New value"
-
-[[commands.config_set.errors]]
-code = "BADARG"
-condition = "Missing key or value, invalid value type"
-
-[[commands.config_set.errors]]
-code = "NOTFOUND"
-condition = "Unknown configuration key"
-
-[[commands.config_set.errors]]
-code = "DENIED"
-condition = "Authentication required"
-
-# ── SUBSCRIBE ─────────────────────────────────────────────────────────────────
-
-[commands.subscribe]
-verb = "SUBSCRIBE"
-description = "Subscribe to real-time event notifications"
-replica_behavior = "pure_read"
-streaming = true
-
-[[commands.subscribe.params]]
-name = "channel"
-type = "token"
-required = true
-position = 1
-description = "Channel name (e.g. 'keyspace:tokens')"
-
-[[commands.subscribe.errors]]
-code = "BADARG"
-condition = "Missing channel"
-
-[[commands.subscribe.errors]]
-code = "DENIED"
-condition = "Authentication required"
-
-# ── PASSWORD SET ─────────────────────────────────────────────────────────────
-
-[commands.password_set]
-verb = "PASSWORD"
-subcommand = "SET"
-description = "Set a password for a user in a password keyspace"
-replica_behavior = "write"
-
-[[commands.password_set.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target password keyspace"
-
-[[commands.password_set.params]]
-name = "user_id"
-type = "token"
-required = true
-position = 2
-description = "User identifier"
-
-[[commands.password_set.params]]
-name = "password"
-type = "token"
-required = true
-position = 3
-description = "Plaintext password (never stored)"
-
-[[commands.password_set.params]]
-name = "metadata"
-type = "json_value"
-required = false
-key = "META"
-description = "Metadata to attach to the credential"
-
-[[commands.password_set.response]]
-name = "credential_id"
-type = "credential_id"
-description = "Unique credential identifier"
-
-[[commands.password_set.response]]
-name = "user_id"
-type = "token"
-description = "User identifier"
-
-[[commands.password_set.response]]
-name = "algorithm"
-type = "token"
-description = "Hash algorithm used"
-
-[[commands.password_set.response]]
-name = "created_at"
-type = "unix_timestamp"
-description = "Creation timestamp"
-
-[[commands.password_set.errors]]
-code = "BADARG"
-condition = "Missing keyspace, user_id, or password"
-
-[[commands.password_set.errors]]
-code = "WRONGTYPE"
-condition = "Keyspace is not password type"
-
-[[commands.password_set.errors]]
-code = "STATE_ERROR"
-condition = "User already has a password (use CHANGE)"
-
-[[commands.password_set.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── PASSWORD VERIFY ──────────────────────────────────────────────────────────
-
-[commands.password_verify]
-verb = "PASSWORD"
-subcommand = "VERIFY"
-description = "Verify a user's password"
-replica_behavior = "conditional_write"
-
-[[commands.password_verify.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target password keyspace"
-
-[[commands.password_verify.params]]
-name = "user_id"
-type = "token"
-required = true
-position = 2
-description = "User identifier"
-
-[[commands.password_verify.params]]
-name = "password"
-type = "token"
-required = true
-position = 3
-description = "Plaintext password to verify"
-
-[[commands.password_verify.response]]
-name = "valid"
-type = "boolean_flag"
-description = "Whether the password is correct"
-
-[[commands.password_verify.response]]
-name = "credential_id"
-type = "credential_id"
-description = "Credential identifier"
-
-[[commands.password_verify.response]]
-name = "metadata"
-type = "json_value"
-optional = true
-description = "Attached metadata"
-
-[[commands.password_verify.errors]]
-code = "BADARG"
-condition = "Missing keyspace, user_id, or password"
-
-[[commands.password_verify.errors]]
-code = "WRONGTYPE"
-condition = "Keyspace is not password type"
-
-[[commands.password_verify.errors]]
-code = "NOTFOUND"
-condition = "User does not exist"
-
-[[commands.password_verify.errors]]
-code = "DENIED"
-condition = "Password is incorrect"
-
-[[commands.password_verify.errors]]
-code = "LOCKED"
-condition = "Account temporarily locked"
-
-[[commands.password_verify.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── PASSWORD CHANGE ──────────────────────────────────────────────────────────
-
-[commands.password_change]
-verb = "PASSWORD"
-subcommand = "CHANGE"
-description = "Change a user's password (requires old password)"
-replica_behavior = "write"
-
-[[commands.password_change.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target password keyspace"
-
-[[commands.password_change.params]]
-name = "user_id"
-type = "token"
-required = true
-position = 2
-description = "User identifier"
-
-[[commands.password_change.params]]
-name = "old_password"
-type = "token"
-required = true
-position = 3
-description = "Current plaintext password"
-
-[[commands.password_change.params]]
-name = "new_password"
-type = "token"
-required = true
-position = 4
-description = "New plaintext password"
-
-[[commands.password_change.response]]
-name = "credential_id"
-type = "credential_id"
-description = "Credential identifier"
-
-[[commands.password_change.response]]
-name = "updated_at"
-type = "unix_timestamp"
-description = "Update timestamp"
-
-[[commands.password_change.errors]]
-code = "BADARG"
-condition = "Missing arguments"
-
-[[commands.password_change.errors]]
-code = "WRONGTYPE"
-condition = "Keyspace is not password type"
-
-[[commands.password_change.errors]]
-code = "NOTFOUND"
-condition = "User does not exist"
-
-[[commands.password_change.errors]]
-code = "DENIED"
-condition = "Old password is incorrect"
-
-[[commands.password_change.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ── PASSWORD IMPORT ──────────────────────────────────────────────────────────
-
-[commands.password_import]
-verb = "PASSWORD"
-subcommand = "IMPORT"
-description = "Import a pre-hashed password for migration from another system (argon2, bcrypt, scrypt)"
-replica_behavior = "write"
-
-[[commands.password_import.params]]
-name = "keyspace"
-type = "keyspace"
-required = true
-position = 1
-description = "Target password keyspace"
-
-[[commands.password_import.params]]
-name = "user_id"
-type = "token"
-required = true
-position = 2
-description = "User identifier"
-
-[[commands.password_import.params]]
-name = "hash"
-type = "token"
-required = true
-position = 3
-description = "Pre-hashed password string (PHC or modular crypt format)"
-
-[[commands.password_import.params]]
-name = "metadata"
-type = "json_value"
-required = false
-key = "META"
-description = "Metadata to attach to the credential"
-
-[[commands.password_import.response]]
-name = "credential_id"
-type = "credential_id"
-description = "Unique credential identifier"
-
-[[commands.password_import.response]]
-name = "user_id"
-type = "token"
-description = "User identifier"
-
-[[commands.password_import.response]]
-name = "algorithm"
-type = "token"
-description = "Detected hash algorithm (argon2id, bcrypt, scrypt, etc.)"
-
-[[commands.password_import.response]]
-name = "created_at"
-type = "unix_timestamp"
-description = "Creation timestamp"
-
-[[commands.password_import.errors]]
-code = "BADARG"
-condition = "Missing keyspace, user_id, or hash"
-
-[[commands.password_import.errors]]
-code = "WRONGTYPE"
-condition = "Keyspace is not password type"
-
-[[commands.password_import.errors]]
-code = "STATE_ERROR"
-condition = "User already has a password"
-
-[[commands.password_import.errors]]
-code = "VALIDATION_ERROR"
-condition = "Unrecognized hash format"
-
-[[commands.password_import.errors]]
-code = "DISABLED"
-condition = "Keyspace is disabled"
-
-# ─── Introspection ─────────────────────────────────────────────────────────────
-
-[commands.ping]
-verb = "PING"
-description = "Simple connectivity check — returns PONG without auth or health checks"
-replica_behavior = "PureRead"
-params = []
-
-[[commands.ping.response]]
-name = "message"
 type = "string"
-description = "Always PONG"
+required = true
 
-[commands.command_list]
-verb = "COMMAND"
-variant = "LIST"
-description = "List all supported commands for this engine"
-replica_behavior = "PureRead"
-params = []
+[commands.AUTH.response]
+actor = "string"
 
-[[commands.command_list.response]]
+[commands.PING]
+description = "Test connectivity"
+acl = "none"
+
+[commands.PING.response]
+message = "string"
+
+# ─── Data commands ────────────────────────────────────────────────────────────
+
+[commands.PUT]
+description = "Store a value at the given key. Auto-increments version."
+acl = "write"
+
+[[commands.PUT.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.PUT.params]]
+name = "key"
+type = "string"
+required = true
+
+[[commands.PUT.params]]
+name = "value"
+type = "string"
+required = false
+description = "Positional (3rd arg) or via VALUE keyword"
+
+[[commands.PUT.params]]
+name = "VALUE"
+type = "keyword_string"
+required = false
+description = "Explicit value keyword"
+
+[[commands.PUT.params]]
+name = "META"
+type = "keyword_json"
+required = false
+description = "JSON metadata object"
+
+[commands.PUT.response]
+version = "integer"
+
+[commands.GET]
+description = "Retrieve the value at a key"
+acl = "read"
+
+[[commands.GET.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.GET.params]]
+name = "key"
+type = "string"
+required = true
+
+[[commands.GET.params]]
+name = "VERSION"
+type = "keyword_integer"
+required = false
+description = "Specific version number"
+
+[[commands.GET.params]]
+name = "META"
+type = "flag"
+required = false
+description = "Include metadata in response"
+
+[commands.GET.response]
+key = "bytes"
+value = "bytes"
+version = "integer"
+metadata = "json?"
+
+[commands.DELETE]
+description = "Delete a key by writing a tombstone"
+acl = "write"
+
+[[commands.DELETE.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.DELETE.params]]
+name = "key"
+type = "string"
+required = true
+
+[commands.DELETE.response]
+version = "integer"
+
+[commands.LIST]
+description = "List active keys in a namespace"
+acl = "read"
+
+[[commands.LIST.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.LIST.params]]
+name = "PREFIX"
+type = "keyword_string"
+required = false
+
+[[commands.LIST.params]]
+name = "CURSOR"
+type = "keyword_string"
+required = false
+
+[[commands.LIST.params]]
+name = "LIMIT"
+type = "keyword_integer"
+required = false
+default = 100
+
+[commands.LIST.response]
+keys = "array<bytes>"
+cursor = "string?"
+
+[commands.VERSIONS]
+description = "Retrieve version history for a key (most recent first)"
+acl = "read"
+
+[[commands.VERSIONS.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.VERSIONS.params]]
+name = "key"
+type = "string"
+required = true
+
+[[commands.VERSIONS.params]]
+name = "LIMIT"
+type = "keyword_integer"
+required = false
+default = 100
+
+[[commands.VERSIONS.params]]
+name = "FROM"
+type = "keyword_integer"
+required = false
+description = "Start from this version number (descending)"
+
+[commands.VERSIONS.response]
+versions = "array<map{version: integer, state: string, updated_at: integer, actor: string}>"
+
+# ─── Namespace commands ───────────────────────────────────────────────────────
+
+[commands."NAMESPACE CREATE"]
+description = "Create a new namespace"
+acl = "admin"
+
+[[commands."NAMESPACE CREATE".params]]
+name = "name"
+type = "string"
+required = true
+
+[[commands."NAMESPACE CREATE".params]]
+name = "SCHEMA"
+type = "keyword_json"
+required = false
+
+[[commands."NAMESPACE CREATE".params]]
+name = "MAX_VERSIONS"
+type = "keyword_integer"
+required = false
+
+[[commands."NAMESPACE CREATE".params]]
+name = "TOMBSTONE_RETENTION"
+type = "keyword_integer"
+required = false
+description = "Seconds to retain tombstones before compaction"
+
+[commands."NAMESPACE DROP"]
+description = "Drop a namespace"
+acl = "admin"
+
+[[commands."NAMESPACE DROP".params]]
+name = "name"
+type = "string"
+required = true
+
+[[commands."NAMESPACE DROP".params]]
+name = "FORCE"
+type = "flag"
+required = false
+description = "Drop even if namespace contains keys"
+
+[commands."NAMESPACE LIST"]
+description = "List namespaces (filtered by token grants)"
+acl = "none"
+
+[[commands."NAMESPACE LIST".params]]
+name = "CURSOR"
+type = "keyword_string"
+required = false
+
+[[commands."NAMESPACE LIST".params]]
+name = "LIMIT"
+type = "keyword_integer"
+required = false
+default = 100
+
+[commands."NAMESPACE LIST".response]
+namespaces = "array<string>"
+cursor = "string?"
+
+[commands."NAMESPACE INFO"]
+description = "Get metadata about a namespace"
+acl = "read"
+
+[[commands."NAMESPACE INFO".params]]
+name = "name"
+type = "string"
+required = true
+
+[commands."NAMESPACE INFO".response]
+name = "string"
+key_count = "integer"
+created_at = "integer"
+
+[commands."NAMESPACE ALTER"]
+description = "Update namespace configuration (enforce-on-write-only)"
+acl = "admin"
+
+[[commands."NAMESPACE ALTER".params]]
+name = "name"
+type = "string"
+required = true
+
+[[commands."NAMESPACE ALTER".params]]
+name = "SCHEMA"
+type = "keyword_json"
+required = false
+
+[[commands."NAMESPACE ALTER".params]]
+name = "MAX_VERSIONS"
+type = "keyword_integer"
+required = false
+
+[[commands."NAMESPACE ALTER".params]]
+name = "TOMBSTONE_RETENTION"
+type = "keyword_integer"
+required = false
+
+[commands."NAMESPACE VALIDATE"]
+description = "Check existing entries against current MetaSchema"
+acl = "read"
+
+[[commands."NAMESPACE VALIDATE".params]]
+name = "name"
+type = "string"
+required = true
+
+[commands."NAMESPACE VALIDATE".response]
+count = "integer"
+reports = "array<map{key: bytes, version: integer, errors: array<string>}>"
+
+# ─── Batch commands ───────────────────────────────────────────────────────────
+
+[commands.PIPELINE]
+description = "Execute commands atomically (all succeed or all roll back)"
+acl = "none"
+
+[[commands.PIPELINE.params]]
 name = "count"
 type = "integer"
-description = "Number of supported commands"
+required = true
+description = "Number of commands that follow"
 
-[[commands.command_list.response]]
-name = "commands"
-type = "array"
-description = "List of command verb strings"
+# ─── Streaming commands ───────────────────────────────────────────────────────
+
+[commands.SUBSCRIBE]
+description = "Subscribe to change events on a namespace"
+acl = "read"
+
+[[commands.SUBSCRIBE.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.SUBSCRIBE.params]]
+name = "KEY"
+type = "keyword_string"
+required = false
+
+[[commands.SUBSCRIBE.params]]
+name = "EVENTS"
+type = "keyword_string_list"
+required = false
+description = "Event types: PUT, DELETE, or * for all"
+
+[commands.UNSUBSCRIBE]
+description = "End the current subscription"
+acl = "none"
+
+# ─── Operational commands ─────────────────────────────────────────────────────
+
+[commands.HEALTH]
+description = "Check server health"
+acl = "none"
+
+[commands.HEALTH.response]
+message = "string"
+
+[commands."CONFIG GET"]
+description = "Read a runtime configuration value"
+acl = "none"
+
+[[commands."CONFIG GET".params]]
+name = "key"
+type = "string"
+required = true
+
+[commands."CONFIG GET".response]
+key = "string"
+value = "string?"
+
+[commands."CONFIG SET"]
+description = "Set a runtime configuration value (admin only)"
+acl = "admin"
+
+[[commands."CONFIG SET".params]]
+name = "key"
+type = "string"
+required = true
+
+[[commands."CONFIG SET".params]]
+name = "value"
+type = "string"
+required = true
+
+[commands."COMMAND LIST"]
+description = "List all supported commands"
+acl = "none"
+
+[commands."COMMAND LIST".response]
+count = "integer"
+commands = "array<string>"

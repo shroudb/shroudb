@@ -6,6 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+shroudb-store.workspace = true
+
 tokio.workspace = true
 tokio-rustls.workspace = true
 rustls.workspace = true
@@ -18,4 +20,3 @@ thiserror.workspace = true
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true, features = ["full"] }
-libc = "0.2"

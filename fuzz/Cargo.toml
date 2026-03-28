@@ -9,14 +9,23 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "io-util"] }
 shroudb-protocol = { path = "../shroudb-protocol" }
-shroudb-storage = { git = "https://github.com/shroudb/commons.git", tag = "v0.1.0" }
+shroudb-acl = { version = "0.1.1", registry = "shroudb" }
+shroudb-store = { version = "0.1.0", registry = "shroudb" }
+shroudb-storage = { version = "0.2.0", registry = "shroudb" }
 toml = "1"
+serde_json = "1"
 
 [[bin]]
 name = "resp3_parser"
 path = "fuzz_targets/resp3_parser.rs"
+doc = false
+
+[[bin]]
+name = "command_parser"
+path = "fuzz_targets/command_parser.rs"
 doc = false
 
 [[bin]]
@@ -27,4 +36,14 @@ doc = false
 [[bin]]
 name = "config_parser"
 path = "fuzz_targets/config_parser.rs"
+doc = false
+
+[[bin]]
+name = "acl_check"
+path = "fuzz_targets/acl_check.rs"
+doc = false
+
+[[bin]]
+name = "meta_schema_validate"
+path = "fuzz_targets/meta_schema_validate.rs"
 doc = false
