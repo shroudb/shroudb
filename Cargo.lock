@@ -2285,7 +2285,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shroudb"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2327,7 +2327,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-cli"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2339,7 +2339,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-client"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "rustls",
  "rustls-native-certs",
@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-protocol"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "dashmap",
