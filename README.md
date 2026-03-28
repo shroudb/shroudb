@@ -9,9 +9,9 @@ Most systems treat encryption, access control, multi-tenancy, and auditability a
 ShrouDB makes them properties of the storage layer itself:
 
 - Every write is **versioned** and auditable — no blind overwrites, no data erasure ambiguity
-- Every tenant is **cryptographically isolated** via HKDF-derived keys — not just row-filtered
+- Every tenant is **cryptographically isolated** via HKDF-derived keys — unlike traditional multi-tenant systems that rely on logical separation, ShrouDB derives independent encryption keys per tenant and namespace, making isolation a cryptographic property rather than a policy decision
 - Every access is **scoped and enforced** at the protocol boundary — before handlers run
-- Every change can be **streamed in real time** via SUBSCRIBE and webhooks
+- Every change is emitted as a **structured event** with version metadata, enabling real-time replication, indexing, and downstream processing without external CDC systems
 
 This enables building higher-level systems — authentication, secret management, policy enforcement — on a shared, consistent foundation.
 
@@ -86,7 +86,7 @@ version: 1  state: active
 - Stream changes to downstream services via SUBSCRIBE
 - Maintain full audit history via versioned keys and tombstones
 
-No external secrets manager. No external policy engine. No external CDC pipeline.
+Reduces or eliminates the need for external secrets managers, policy engines, and CDC pipelines.
 
 ## Connection String
 
@@ -142,7 +142,7 @@ See [`config.example.toml`](config.example.toml) for all options including auth 
 | `NAMESPACE ALTER <name> [SCHEMA <json>]` | Update config |
 | `NAMESPACE VALIDATE <name>` | Check entries against schema |
 | **Batch** | |
-| `PIPELINE [REQUEST_ID <id>] <commands...>` | Batch execution with optional idempotency |
+| `PIPELINE [REQUEST_ID <id>] <commands...>` | Execute multiple commands as a single unit. If any command fails, no partial writes are committed. Optional REQUEST_ID for idempotent retries. |
 | **Streaming** | |
 | `SUBSCRIBE <ns> [KEY <k>] [EVENTS <types>]` | Subscribe to changes |
 | `UNSUBSCRIBE` | End subscription |
@@ -205,6 +205,10 @@ Download from [GitHub Releases](https://github.com/shroudb/shroudb/releases). Li
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full crate map and data flow.
 
+## Scope
+
+ShrouDB is not designed for large-scale analytical workloads or full relational querying. It is optimized for operational state, security-sensitive data, and system coordination.
+
 ## Building on ShrouDB
 
 ShrouDB is designed as a foundation for higher-level systems:
@@ -213,6 +217,8 @@ ShrouDB is designed as a foundation for higher-level systems:
 - Secret management
 - Encryption-as-a-service
 - Policy enforcement and audit
+
+For example, a token service can issue credentials stored in ShrouDB, enforce access via namespace-scoped grants, and stream audit events to downstream systems — all without external dependencies.
 
 These systems run on top of the ShrouDB protocol — embedded or remote — through the `Store` trait.
 
