@@ -2293,6 +2293,7 @@ dependencies = [
  "libc",
  "metrics",
  "metrics-exporter-prometheus",
+ "postcard",
  "reqwest",
  "ring",
  "rustls",

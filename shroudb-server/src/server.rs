@@ -19,14 +19,13 @@ pub async fn run<S: Store + 'static, V: TokenValidator + 'static>(
     dispatcher: Arc<CommandDispatcher<S>>,
     token_validator: Arc<V>,
     auth_required: bool,
+    rate_limit_rx: watch::Receiver<Option<u32>>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("binding TCP on {}", config.bind))?;
     tracing::info!(addr = %config.bind, "listening");
-
-    let rate_limit = config.rate_limit_per_second;
 
     let tls_acceptor = build_tls_acceptor(config)?;
     if tls_acceptor.is_some() {
@@ -65,7 +64,7 @@ pub async fn run<S: Store + 'static, V: TokenValidator + 'static>(
                         let tv = Arc::clone(&token_validator);
                         let ar = auth_required;
                         let srx = shutdown_rx.clone();
-                        let rl = rate_limit;
+                        let rl = *rate_limit_rx.borrow();
                         if let Some(ref acceptor) = tls_acceptor {
                             let acceptor = acceptor.clone();
                             tasks.spawn(async move {
@@ -107,7 +106,7 @@ pub async fn run<S: Store + 'static, V: TokenValidator + 'static>(
                         let tv = Arc::clone(&token_validator);
                         let ar = auth_required;
                         let srx = shutdown_rx.clone();
-                        let rl = rate_limit;
+                        let rl = *rate_limit_rx.borrow();
                         tasks.spawn(async move {
                             handle_connection(uds_stream, disp, tv, ar, srx, rl).await;
                         });
