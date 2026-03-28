@@ -13,12 +13,21 @@ ShrouDB makes them properties of the storage layer itself:
 - Every access is **scoped and enforced** at the protocol boundary — before handlers run
 - Every change is emitted as a **structured event** with version metadata, enabling real-time replication, indexing, and downstream processing without external CDC systems
 
-This enables building higher-level systems — authentication, secret management, policy enforcement — on a shared, consistent foundation.
+ShrouDB exposes a minimal set of primitives — versioned keys, namespaces, identity-scoped access, and event streams — from which higher-level systems can be composed.
+
+## Mental model
+
+- A versioned log of state, not just current values
+- Partitioned into namespaces with independent encryption keys
+- Accessed through identity-scoped tokens
+- Emitting a stream of changes for every mutation
+
+Applications build on these primitives rather than reimplementing them.
 
 ## Core guarantees
 
 - **Versioned state** — every PUT increments the version. Full history queryable via VERSIONS. DELETE writes a tombstone, not an erasure.
-- **Cryptographic tenant isolation** — HKDF-SHA256 derives a unique AES-256-GCM key per namespace. Tenant identity resolved from auth token. Compromise of one namespace does not expose others.
+- **Cryptographic tenant isolation** — HKDF-SHA256 derives a unique AES-256-GCM key per namespace. Tenant identity resolved from auth token. Compromise of one namespace's data or derived key does not expose other namespaces, as each uses independently derived encryption keys.
 - **Tombstone deletes** — deletions are auditable events with version history, not silent data removal.
 
 ## Security model
@@ -30,7 +39,7 @@ This enables building higher-level systems — authentication, secret management
 
 ## System capabilities
 
-- **RESP3 wire protocol** — Redis-compatible clients work out of the box. 20 commands, pipelining, push frames.
+- **RESP3 wire protocol** — uses the RESP3 binary protocol for efficient, well-understood framing. 20 commands, pipelining, push frames. ShrouDB is not Redis and does not aim for Redis compatibility — it uses RESP3 as a transport layer.
 - **SUBSCRIBE** — real-time change stream with namespace, key, and event type filtering
 - **Webhooks** — HMAC-SHA256 signed HTTP delivery with retry and backoff
 - **Namespaces** with optional JSON metadata schemas (enforced on write, validated on demand)
@@ -86,7 +95,7 @@ version: 1  state: active
 - Stream changes to downstream services via SUBSCRIBE
 - Maintain full audit history via versioned keys and tombstones
 
-Reduces or eliminates the need for external secrets managers, policy engines, and CDC pipelines.
+Provides a unified foundation that can replace separate systems for secrets, policy, and change propagation in many architectures.
 
 ## Connection String
 
@@ -144,7 +153,7 @@ See [`config.example.toml`](config.example.toml) for all options including auth 
 | **Batch** | |
 | `PIPELINE [REQUEST_ID <id>] <commands...>` | Execute multiple commands as a single unit. If any command fails, no partial writes are committed. Optional REQUEST_ID for idempotent retries. |
 | **Streaming** | |
-| `SUBSCRIBE <ns> [KEY <k>] [EVENTS <types>]` | Subscribe to changes |
+| `SUBSCRIBE <ns> [KEY <k>] [EVENTS <types>]` | Subscribe to changes. Events include namespace, key, version, operation type, and actor. |
 | `UNSUBSCRIBE` | End subscription |
 | **Operational** | |
 | `HEALTH` | Health check |
@@ -220,7 +229,7 @@ ShrouDB is designed as a foundation for higher-level systems:
 
 For example, a token service can issue credentials stored in ShrouDB, enforce access via namespace-scoped grants, and stream audit events to downstream systems — all without external dependencies.
 
-These systems run on top of the ShrouDB protocol — embedded or remote — through the `Store` trait.
+ShrouDB is designed to be extended — either as a standalone service or embedded as a storage layer within higher-level systems via the `Store` trait.
 
 ## License
 

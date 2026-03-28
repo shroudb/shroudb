@@ -2,6 +2,18 @@
 
 Core database engine — server and CLI.
 
+## Identity
+
+ShrouDB is **not Redis**. It is not a cache, not a Redis replacement, and not "like Redis." It uses the RESP3 wire protocol as a transport layer because RESP3 is a well-specified, efficient binary framing protocol — the same reason HTTP/2 uses HPACK or gRPC uses protobuf. The choice of wire format does not define the product.
+
+Do not:
+- Compare ShrouDB to Redis in documentation, comments, or commit messages
+- Describe ShrouDB as "Redis-compatible" or "Redis-like"
+- Use Redis terminology (e.g., "key expiry," "pub/sub," "cache eviction") for ShrouDB concepts
+- Suggest Redis clients as a way to connect to ShrouDB
+
+ShrouDB is a versioned, encrypted state store with cryptographic tenant isolation. It is a foundation for building secure systems, not a general-purpose cache or data structure server.
+
 ## Security posture
 
 ShrouDB is security infrastructure. Every change must be evaluated through a security lens:
