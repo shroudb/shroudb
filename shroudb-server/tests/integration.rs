@@ -1,6 +1,8 @@
 mod common;
 
 use common::*;
+use shroudb_client::RemoteStore;
+use shroudb_store::Store;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::Command;
@@ -1315,4 +1317,97 @@ async fn corrupt_wal_segment_handled_gracefully() {
             "server should start even with a corrupted WAL segment"
         );
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// RemoteStore — Store trait over TCP
+// ═══════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn remote_store_put_get_delete() {
+    let server = TestServer::start().await.expect("server failed to start");
+
+    // Connect via RemoteStore (Store trait, not ShrouDBClient)
+    let client = shroudb_client::ShrouDBClient::connect(&server.addr)
+        .await
+        .unwrap();
+    let store = RemoteStore::new(client);
+
+    // Use the Store trait — this is how engines will call it
+    store
+        .namespace_create("remote-test", Default::default())
+        .await
+        .unwrap();
+
+    let v1 = store
+        .put("remote-test", b"key1", b"hello", None)
+        .await
+        .unwrap();
+    assert_eq!(v1, 1);
+
+    let entry = store.get("remote-test", b"key1", None).await.unwrap();
+    assert_eq!(entry.value, b"hello");
+    assert_eq!(entry.version, 1);
+
+    let v2 = store
+        .put("remote-test", b"key1", b"world", None)
+        .await
+        .unwrap();
+    assert_eq!(v2, 2);
+
+    let v3 = store.delete("remote-test", b"key1").await.unwrap();
+    assert_eq!(v3, 3);
+
+    let result = store.get("remote-test", b"key1", None).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn remote_store_list_and_versions() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let client = shroudb_client::ShrouDBClient::connect(&server.addr)
+        .await
+        .unwrap();
+    let store = RemoteStore::new(client);
+
+    store
+        .namespace_create("rs-list", Default::default())
+        .await
+        .unwrap();
+    store.put("rs-list", b"a", b"1", None).await.unwrap();
+    store.put("rs-list", b"b", b"2", None).await.unwrap();
+    store.put("rs-list", b"a", b"1v2", None).await.unwrap();
+
+    let page = store.list("rs-list", None, None, 100).await.unwrap();
+    assert_eq!(page.keys.len(), 2);
+
+    let versions = store.versions("rs-list", b"a", 10, None).await.unwrap();
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].version, 2);
+}
+
+#[tokio::test]
+async fn remote_store_namespace_lifecycle() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let client = shroudb_client::ShrouDBClient::connect(&server.addr)
+        .await
+        .unwrap();
+    let store = RemoteStore::new(client);
+
+    store
+        .namespace_create("rs-ns", Default::default())
+        .await
+        .unwrap();
+
+    let info = store.namespace_info("rs-ns").await.unwrap();
+    assert_eq!(info.name, "rs-ns");
+    assert_eq!(info.key_count, 0);
+
+    let page = store.namespace_list(None, 100).await.unwrap();
+    assert!(!page.keys.is_empty());
+
+    store.namespace_drop("rs-ns", false).await.unwrap();
+
+    let result = store.namespace_info("rs-ns").await;
+    assert!(result.is_err());
 }

@@ -27,9 +27,11 @@
 
 pub mod connection;
 pub mod error;
+pub mod remote_store;
 pub mod response;
 
 pub use error::ClientError;
+pub use remote_store::RemoteStore;
 pub use response::Response;
 
 use connection::Connection;
@@ -444,7 +446,7 @@ impl ShrouDBClient {
 // Response parsing helpers
 // ---------------------------------------------------------------------------
 
-fn check_ok(resp: &Response) -> Result<(), ClientError> {
+pub(crate) fn check_ok(resp: &Response) -> Result<(), ClientError> {
     match resp {
         Response::Error(e) => Err(ClientError::Server(e.clone())),
         Response::Null => Err(ClientError::ResponseFormat("unexpected null".into())),
