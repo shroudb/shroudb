@@ -474,7 +474,29 @@ fn parse_pipeline(strings: &[String]) -> Result<Command, CommandError> {
             message: "PIPELINE requires a count".into(),
         })?;
     let _ = count; // count is informational; actual commands follow as separate frames
-    Ok(Command::Pipeline(Vec::new()))
+
+    // Optional REQUEST_ID keyword for idempotency
+    let mut request_id = None;
+    let args = &strings[2..];
+    let mut i = 0;
+    while i < args.len() {
+        if args[i].eq_ignore_ascii_case("REQUEST_ID") {
+            if i + 1 >= args.len() {
+                return Err(CommandError::BadArg {
+                    message: "REQUEST_ID requires a value".into(),
+                });
+            }
+            request_id = Some(args[i + 1].clone());
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+
+    Ok(Command::Pipeline {
+        commands: Vec::new(),
+        request_id,
+    })
 }
 
 // ── SUBSCRIBE <ns> [KEY <key>] [EVENTS <PUT|DELETE|*>] ───────────────

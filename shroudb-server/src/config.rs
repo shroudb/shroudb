@@ -70,6 +70,9 @@ pub struct ServerConfig {
     pub rate_limit_per_second: Option<u32>,
     #[serde(default)]
     pub metrics_bind: Option<SocketAddr>,
+    /// OpenTelemetry OTLP endpoint (e.g. `http://localhost:4317`).
+    #[serde(default)]
+    pub otel_endpoint: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -82,6 +85,7 @@ impl Default for ServerConfig {
             unix_socket: None,
             rate_limit_per_second: None,
             metrics_bind: None,
+            otel_endpoint: None,
         }
     }
 }

@@ -67,7 +67,10 @@ pub enum Command {
     },
 
     // ── Batch ────────────────────────────────────────────────────────
-    Pipeline(Vec<Command>),
+    Pipeline {
+        commands: Vec<Command>,
+        request_id: Option<String>,
+    },
 
     // ── Streaming ────────────────────────────────────────────────────
     Subscribe {
@@ -136,7 +139,7 @@ impl Command {
             Command::Unsubscribe => AclRequirement::None,
 
             // Pipeline: checked per-command during execution
-            Command::Pipeline(_) => AclRequirement::None,
+            Command::Pipeline { .. } => AclRequirement::None,
         }
     }
 
@@ -156,7 +159,7 @@ impl Command {
             Command::NamespaceInfo { .. } => "NAMESPACE INFO",
             Command::NamespaceAlter { .. } => "NAMESPACE ALTER",
             Command::NamespaceValidate { .. } => "NAMESPACE VALIDATE",
-            Command::Pipeline(_) => "PIPELINE",
+            Command::Pipeline { .. } => "PIPELINE",
             Command::Subscribe { .. } => "SUBSCRIBE",
             Command::Unsubscribe => "UNSUBSCRIBE",
             Command::Health => "HEALTH",

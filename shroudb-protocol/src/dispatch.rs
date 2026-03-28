@@ -10,17 +10,24 @@ use shroudb_store::Store;
 use crate::command::Command;
 use crate::error::CommandError;
 use crate::handlers;
+use crate::idempotency::IdempotencyMap;
+use crate::resp3::serialize::response_to_frame;
 use crate::response::{CommandResponse, ResponseMap, ResponseValue};
 
 /// Routes parsed commands to handlers, enforcing ACL at the dispatcher level.
 pub struct CommandDispatcher<S: Store> {
     store: S,
     engine: Arc<StorageEngine>,
+    idempotency: IdempotencyMap,
 }
 
 impl<S: Store> CommandDispatcher<S> {
     pub fn new(store: S, engine: Arc<StorageEngine>) -> Self {
-        Self { store, engine }
+        Self {
+            store,
+            engine,
+            idempotency: IdempotencyMap::new(),
+        }
     }
 
     /// Access the underlying store (e.g., for connection-level SUBSCRIBE).
@@ -28,15 +35,39 @@ impl<S: Store> CommandDispatcher<S> {
         &self.store
     }
 
+    /// Access the idempotency map (for periodic pruning).
+    pub fn idempotency(&self) -> &IdempotencyMap {
+        &self.idempotency
+    }
+
     /// Execute a command with the given auth context.
     pub async fn execute(&self, cmd: Command, auth: Option<&AuthContext>) -> CommandResponse {
         // Pipeline: execute each sub-command (boxed to avoid infinite future size)
-        if let Command::Pipeline(commands) = cmd {
+        if let Command::Pipeline {
+            commands,
+            request_id,
+        } = cmd
+        {
+            // Idempotency: return cached response if request_id was seen before
+            if let Some(ref id) = request_id
+                && let Some(cached_frame) = self.idempotency.get(id)
+            {
+                return CommandResponse::CachedFrame(cached_frame);
+            }
+
             let mut results = Vec::with_capacity(commands.len());
             for c in commands {
                 results.push(Box::pin(self.execute(c, auth)).await);
             }
-            return CommandResponse::Array(results);
+            let response = CommandResponse::Array(results);
+
+            // Cache the serialized frame for future retries
+            if let Some(id) = request_id {
+                let frame = response_to_frame(&response);
+                self.idempotency.insert(id, frame);
+            }
+
+            return response;
         }
 
         // ACL middleware: check before handler runs
@@ -225,7 +256,7 @@ impl<S: Store> CommandDispatcher<S> {
             }),
 
             // Pipeline handled above
-            Command::Pipeline(_) => unreachable!("pipeline handled in execute()"),
+            Command::Pipeline { .. } => unreachable!("pipeline handled in execute()"),
         }
     }
 }

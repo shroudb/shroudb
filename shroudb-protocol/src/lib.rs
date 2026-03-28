@@ -8,6 +8,7 @@ pub mod command;
 pub mod dispatch;
 pub mod error;
 pub mod handlers;
+pub mod idempotency;
 pub mod resp3;
 pub mod response;
 

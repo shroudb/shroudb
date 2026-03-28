@@ -5,6 +5,8 @@ pub enum CommandResponse {
     Success(ResponseMap),
     Error(CommandError),
     Array(Vec<CommandResponse>),
+    /// A pre-serialized RESP3 frame (used by idempotency cache to replay exact responses).
+    CachedFrame(crate::resp3::Resp3Frame),
 }
 
 /// A map of string keys to response values.

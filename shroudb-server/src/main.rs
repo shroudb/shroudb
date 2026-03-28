@@ -164,12 +164,34 @@ impl MasterKeySource for EphemeralMasterKey {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Log level: CLI > env > default
-    // Clap already resolved CLI vs env via `env = "SHROUDB_LOG_LEVEL"`.
+    // Load TOML config early (before telemetry) so we can use otel_endpoint.
+    let default_config_path = PathBuf::from("config.toml");
+    let mut cfg = if cli.config.exists() {
+        config::load_config(&cli.config)
+            .with_context(|| format!("loading config from {}", cli.config.display()))?
+    } else if cli.config == default_config_path {
+        config::ShrouDBConfig::default()
+    } else {
+        anyhow::bail!("config file not found: {}", cli.config.display());
+    };
+
+    // Initialize telemetry (console + audit file + optional OTEL)
     let log_level = cli.log_level.as_deref().unwrap_or("info");
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new(log_level))
-        .init();
+    // SAFETY: called before any threads are spawned (single-threaded main init).
+    unsafe { std::env::set_var("SHROUDB_LOG_LEVEL", log_level) };
+    let telemetry_config = shroudb_telemetry::TelemetryConfig {
+        service_name: "shroudb".into(),
+        console: true,
+        audit_file: true,
+        data_dir: Some(cfg.storage.data_dir.display().to_string()),
+        otel_endpoint: cfg.server.otel_endpoint.clone(),
+    };
+    let _telemetry_guard = shroudb_telemetry::init_telemetry(&telemetry_config)
+        .context("failed to initialize telemetry")?;
+
+    if !cli.config.exists() && cli.config == default_config_path {
+        tracing::info!("no config file found at default path, using defaults");
+    }
 
     // Disable core dumps on Linux
     #[cfg(target_os = "linux")]
@@ -179,20 +201,6 @@ async fn main() -> anyhow::Result<()> {
         }
         tracing::debug!("core dumps disabled");
     }
-
-    // Load TOML config (may not exist for zero-config dev mode)
-    let default_config_path = PathBuf::from("config.toml");
-    let mut cfg = if cli.config.exists() {
-        config::load_config(&cli.config)
-            .with_context(|| format!("loading config from {}", cli.config.display()))?
-    } else if cli.config == default_config_path {
-        // Default path doesn't exist — fine, use defaults
-        tracing::info!("no config file found at default path, using defaults");
-        config::ShrouDBConfig::default()
-    } else {
-        // User explicitly specified a config path that doesn't exist
-        anyhow::bail!("config file not found: {}", cli.config.display());
-    };
 
     // Apply CLI/env overrides (precedence: CLI > env > TOML > default)
     // Clap's `env` attribute already merges CLI and env for us.
@@ -293,7 +301,11 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Background tasks
-    let scheduler_handles = scheduler::spawn_all(Arc::clone(&engine), shutdown_rx.clone());
+    let scheduler_handles = scheduler::spawn_all(
+        Arc::clone(&engine),
+        Arc::clone(&dispatcher),
+        shutdown_rx.clone(),
+    );
 
     // Webhook actors
     let webhook_handles = if !cfg.webhooks.is_empty() {

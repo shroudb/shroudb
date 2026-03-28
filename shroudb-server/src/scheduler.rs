@@ -1,13 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use shroudb_protocol::CommandDispatcher;
 use shroudb_storage::StorageEngine;
+use shroudb_store::Store;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 /// Spawn all background tasks. Returns handles for shutdown.
-pub fn spawn_all(
+pub fn spawn_all<S: Store + 'static>(
     engine: Arc<StorageEngine>,
+    dispatcher: Arc<CommandDispatcher<S>>,
     shutdown_rx: watch::Receiver<bool>,
 ) -> Vec<JoinHandle<()>> {
     let mut handles = Vec::new();
@@ -103,5 +106,89 @@ pub fn spawn_all(
         }));
     }
 
+    // Idempotency map reaper (60s interval)
+    {
+        let disp = Arc::clone(&dispatcher);
+        let mut rx = shutdown_rx.clone();
+        handles.push(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = rx.changed() => {
+                        if *rx.borrow() { break; }
+                    }
+                    _ = interval.tick() => {
+                        disp.idempotency().prune();
+                    }
+                }
+            }
+        }));
+    }
+
+    // Tombstone compaction reaper (300s interval)
+    {
+        let engine = Arc::clone(&engine);
+        let mut rx = shutdown_rx.clone();
+        handles.push(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = rx.changed() => {
+                        if *rx.borrow() { break; }
+                    }
+                    _ = interval.tick() => {
+                        compact_tombstones(&engine).await;
+                    }
+                }
+            }
+        }));
+    }
+
     handles
+}
+
+/// Scan all namespaces for expired tombstones and write compaction entries.
+async fn compact_tombstones(engine: &Arc<StorageEngine>) {
+    let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_secs(),
+        Err(_) => return,
+    };
+
+    for ns_entry in engine.index().namespaces.iter() {
+        let ns_name = ns_entry.key().clone();
+        let retention = match ns_entry.value().config.tombstone_retention_secs {
+            Some(secs) if secs > 0 => secs,
+            _ => continue,
+        };
+
+        let cutoff = now.saturating_sub(retention);
+        let expired = engine.index().find_expired_tombstones(&ns_name, cutoff);
+
+        if expired.is_empty() {
+            continue;
+        }
+
+        tracing::info!(
+            namespace = %ns_name,
+            count = expired.len(),
+            "compacting expired tombstones"
+        );
+
+        if let Err(e) = engine
+            .apply(
+                &ns_name,
+                shroudb_storage::OpType::TombstoneCompacted,
+                shroudb_storage::WalPayload::TombstoneCompacted { keys: expired },
+            )
+            .await
+        {
+            tracing::error!(
+                namespace = %ns_name,
+                error = %e,
+                "tombstone compaction failed"
+            );
+        }
+    }
 }

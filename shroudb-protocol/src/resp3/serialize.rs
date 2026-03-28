@@ -10,6 +10,7 @@ pub fn response_to_frame(response: &CommandResponse) -> Resp3Frame {
         CommandResponse::Array(items) => {
             Resp3Frame::Array(items.iter().map(response_to_frame).collect())
         }
+        CommandResponse::CachedFrame(frame) => frame.clone(),
     }
 }
 
