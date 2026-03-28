@@ -13,7 +13,7 @@ An encrypted key-value database built in Rust. Namespaced, versioned, with tombs
 - **TLS and mTLS** with Unix socket support
 - **Access control:** Token-based auth with namespace-scoped read/write/admin grants
 - **Metadata schemas:** Optional typed, validated metadata on all entries with immutable field support
-- **Security hardened:** Zeroize-on-drop for key material, mlock-pinned secrets, core dumps disabled
+- **Security hardened:** Zeroize-on-drop, mlock-pinned secrets, core dumps disabled, constant-time token validation
 
 ## Quick Start
 
