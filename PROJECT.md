@@ -1,5 +1,11 @@
 # ShrouDB — Project Plan
 
+> **Note:** This document was written for v0.1 (credential vault) and has not been
+> fully updated for v1 (encrypted key-value database). The architectural commitments
+> section is mostly still relevant (replace "keyspace" with "namespace" and "credential"
+> with "entry/key"). The phase descriptions and command references are v0.1-specific.
+> See `DOCS.md` for the current v1 command set.
+
 **Language:** Rust
 **Target:** Single static binary with RESP3, REST, and gRPC interfaces
 

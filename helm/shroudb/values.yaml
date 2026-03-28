@@ -8,7 +8,7 @@ image:
 service:
   type: ClusterIP
   resp3Port: 6399
-  restPort: 8080
+  metricsPort: 9090
 
 resources:
   limits:
@@ -31,12 +31,7 @@ masterKey:
 config: |
   [server]
   bind = "0.0.0.0:6399"
-  rest_bind = "0.0.0.0:8080"
+  metrics_bind = "0.0.0.0:9090"
 
   [storage]
   data_dir = "/data"
-
-  [keyspaces.tokens]
-  type = "jwt"
-  algorithm = "ES256"
-  default_ttl = "15m"

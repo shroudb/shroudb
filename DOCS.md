@@ -31,7 +31,7 @@ Download prebuilt binaries from [GitHub Releases](https://github.com/shroudb/shr
 ## Quick Start
 
 ```sh
-# Start the server (dev mode — ephemeral master key, human-readable logs)
+# Start the server (dev mode -- ephemeral master key, human-readable logs)
 shroudb
 
 # Or with a config file
@@ -48,8 +48,8 @@ The server listens on `0.0.0.0:6399` by default.
 ## Connection String
 
 ```
-shroudb://[token@]host[:port][/keyspace]
-shroudb+tls://[token@]host[:port][/keyspace]
+shroudb://[token@]host[:port]
+shroudb+tls://[token@]host[:port]
 ```
 
 Examples:
@@ -58,12 +58,25 @@ Examples:
 shroudb://localhost                        # plain TCP, default port 6399
 shroudb+tls://prod.example.com            # TLS
 shroudb://mytoken@localhost:6399           # with auth token
-shroudb+tls://tok@host:6399/sessions      # TLS + auth + default keyspace
+shroudb+tls://tok@host:6399               # TLS + auth
 ```
 
 ```sh
 shroudb-cli --uri shroudb://localhost:6399
 ```
+
+---
+
+## Data Model
+
+ShrouDB is an encrypted, versioned key-value database. Data is organized into **namespaces**, each containing keys that hold opaque byte values and optional JSON metadata.
+
+- **Namespace** -- A named container for keys. Namespaces can enforce a JSON schema on metadata, cap version history, and control tombstone retention.
+- **Key** -- A UTF-8 string within a namespace.
+- **Value** -- Arbitrary bytes. Encrypted at rest with the master key.
+- **Version** -- Auto-incrementing integer per key. Every PUT creates a new version; previous versions are retained up to the namespace's MAX_VERSIONS limit.
+- **Metadata** -- Optional JSON object attached to each version. Validated against the namespace's schema if one is configured.
+- **Tombstone** -- A DELETE writes a tombstone version. The key is excluded from LIST results but its version history is preserved until compaction.
 
 ---
 
@@ -76,47 +89,70 @@ cp config.example.toml config.toml
 shroudb --config config.toml
 ```
 
-Environment variables can be interpolated with `${VAR_NAME}` syntax.
+Environment variables can be interpolated with `${VAR_NAME}` syntax. Precedence: CLI flag > env var > config file > defaults.
+
+### Config Sections
+
+#### [server]
 
 ```toml
 [server]
 bind = "0.0.0.0:6399"
-# otel_endpoint = "http://localhost:4317"  # OpenTelemetry OTLP endpoint
-# tls_cert = "/path/to/cert.pem"
-# tls_key = "/path/to/key.pem"
-# tls_client_ca = "/path/to/ca.pem"  # mTLS
+# tls_cert = "/etc/shroudb/tls/cert.pem"
+# tls_key = "/etc/shroudb/tls/key.pem"
+# tls_client_ca = "/etc/shroudb/tls/ca.pem"   # mTLS
+# unix_socket = "/var/run/shroudb.sock"
+# rate_limit_per_second = 10000
+# metrics_bind = "0.0.0.0:9090"
+```
 
+#### [storage]
+
+```toml
 [storage]
 data_dir = "./data"
-wal_fsync_mode = "batched"
-wal_fsync_interval_ms = 10
+# fsync_mode = "batched"          # per_write | batched | periodic
+# fsync_interval_ms = 10          # for batched/periodic modes
+# max_segment_bytes = 67108864    # 64 MiB
+# max_segment_entries = 100000
+# snapshot_interval_entries = 100000
+# snapshot_interval_minutes = 60
+```
 
-[keyspaces.auth-tokens]
-type = "jwt"
-algorithm = "ES256"
-rotation_days = 90
-default_ttl = "15m"
+#### [auth]
 
-[keyspaces.service-keys]
-type = "api_key"
-prefix = "sk"
+When `auth.method = "token"`, clients must `AUTH` with a configured token before any command except `PING` is accepted. Each token defines a tenant, actor identity, and namespace grants.
 
-[keyspaces.sessions]
-type = "refresh_token"
-token_ttl = "30d"
+```toml
+[auth]
+method = "token"
 
-[keyspaces.users]
-type = "password"
-algorithm = "argon2id"
-max_failed_attempts = 5
-lockout_duration = "15m"
+[auth.tokens.my-app-token]
+tenant = "tenant-a"
+actor = "my-app"
+grants = [
+    { namespace = "app.users", scopes = ["read", "write"] },
+    { namespace = "app.sessions", scopes = ["read", "write"] },
+]
 
-# [auth]
-# method = "token"
-# [auth.policies.admin]
-# token = "${SHROUDB_ADMIN_TOKEN}"
-# keyspaces = ["*"]
-# commands = ["*"]
+[auth.tokens.admin-token]
+tenant = "platform"
+actor = "admin"
+platform = true    # unrestricted access, cross-tenant capable
+```
+
+#### [[webhooks]]
+
+HTTP endpoints that receive signed event notifications. Payloads are signed with HMAC-SHA256 in the `X-ShrouDB-Signature-256` header.
+
+```toml
+[[webhooks]]
+url = "https://example.com/shroudb-hook"
+secret = "your-hmac-secret"
+events = ["put", "delete"]           # empty = all events
+namespaces = ["myapp.*"]             # empty = all namespaces, supports trailing *
+max_retries = 5
+timeout_ms = 5000
 ```
 
 See [`config.example.toml`](config.example.toml) for all options.
@@ -134,69 +170,70 @@ export SHROUDB_MASTER_KEY="<64-hex-chars>"
 export SHROUDB_MASTER_KEY_FILE="/etc/shroudb/master.key"
 ```
 
-Without a master key, the server starts in dev mode with an ephemeral key — data will not survive restarts.
-
-### Keyspace Types
-
-| Type | Description |
-|------|-------------|
-| `jwt` | Asymmetric signing keys with automatic rotation and JWKS endpoint |
-| `api_key` | Bearer tokens with hashed storage and optional prefix |
-| `hmac` | Symmetric HMAC keys (SHA-256/384/512) with rotation |
-| `refresh_token` | Rotating refresh tokens with family-based revocation and chain tracking |
-| `password` | Argon2id/bcrypt/scrypt password hashing with lockout and transparent rehash |
+Without a master key, the server starts in dev mode with an ephemeral key -- data will not survive restarts.
 
 ---
 
 ## Commands
 
+### Data Commands
+
 | Command | Description |
 |---------|-------------|
-| `ISSUE <ks> [CLAIMS <json>] [META <json>] [TTL <s>]` | Issue a credential (JWT: metadata fields merge as top-level claims) |
-| `VERIFY <ks> <token> [PAYLOAD <data>] [CHECKREV]` | Verify a credential |
-| `REVOKE <ks> <id> \| FAMILY <fid> \| BULK <ids...>` | Revoke credentials |
-| `REFRESH <ks> <token>` | Rotate a refresh token |
-| `UPDATE <ks> <id> META <json>` | Update credential metadata |
-| `INSPECT <ks> <id>` | Get full credential details |
-| `ROTATE <ks> [FORCE] [NOWAIT] [DRYRUN]` | Rotate signing keys |
-| `JWKS <ks>` | Get the JSON Web Key Set |
-| `KEYSTATE <ks>` | Show key ring state |
-| `KEYS <ks> [CURSOR <c>] [MATCH <p>] [STATE <s>] [COUNT <n>]` | List credentials |
-| `SUSPEND / UNSUSPEND <ks> <id>` | Suspend or reactivate a credential |
-| `SCHEMA <ks>` | Display metadata schema |
-| `PASSWORD SET <ks> <uid> <pw> [META <json>]` | Set a password |
-| `PASSWORD VERIFY <ks> <uid> <pw>` | Verify a password |
-| `PASSWORD CHANGE <ks> <uid> <old> <new>` | Change a password |
-| `PASSWORD IMPORT <ks> <uid> <hash> [META <json>]` | Import a pre-hashed password |
-| `SUBSCRIBE <channel>` | Subscribe to events |
-| `PIPELINE ... END` | Batch commands |
-| `AUTH <token>` | Authenticate connection |
-| `CONFIG GET <key>` | Get a config value |
-| `CONFIG SET <key> <value>` | Set a config value |
-| `CONFIG LIST` | List all config keys and values |
-| `HEALTH [<ks>]` | Health check |
+| `PUT ns key [VALUE value] [META json]` | Store a value. Auto-increments version. Returns the new version number. |
+| `GET ns key [VERSION n] [META]` | Retrieve a key's value. Optionally request a specific version or include metadata. |
+| `DELETE ns key` | Soft-delete a key (writes a tombstone). Returns the tombstone version. |
+| `LIST ns [PREFIX p] [CURSOR c] [LIMIT n]` | List active keys in a namespace. Paginated via cursor. |
+| `VERSIONS ns key [LIMIT n] [FROM version]` | List version history for a key (most recent first). |
 
-See [PROTOCOL.md](PROTOCOL.md) for the full protocol specification.
+### Namespace Commands
+
+| Command | Description |
+|---------|-------------|
+| `NAMESPACE CREATE name [SCHEMA json] [MAX_VERSIONS n] [TOMBSTONE_RETENTION n]` | Create a namespace. Optional JSON schema for metadata validation. |
+| `NAMESPACE DROP name [FORCE]` | Drop a namespace. Requires FORCE if the namespace contains keys. |
+| `NAMESPACE LIST [CURSOR c] [LIMIT n]` | List namespaces visible to the current token. |
+| `NAMESPACE INFO name` | Get namespace metadata (key count, creation time). |
+| `NAMESPACE ALTER name [SCHEMA json] [MAX_VERSIONS n] [TOMBSTONE_RETENTION n]` | Update namespace configuration. Schema changes apply on next write. |
+| `NAMESPACE VALIDATE name` | Check existing entries against the current metadata schema. |
+
+### Batch and Streaming
+
+| Command | Description |
+|---------|-------------|
+| `PIPELINE count [REQUEST_ID id]` | Execute the next `count` commands atomically. All succeed or all roll back. |
+| `SUBSCRIBE ns [KEY key] [EVENTS PUT\|DELETE]` | Subscribe to change events on a namespace. Optionally filter by key or event type. |
+| `UNSUBSCRIBE` | End the current subscription. |
+
+### Connection and Operational
+
+| Command | Description |
+|---------|-------------|
+| `AUTH token` | Authenticate the connection. |
+| `PING` | Test connectivity. |
+| `HEALTH` | Check server health. |
+| `CONFIG GET key` | Read a runtime configuration value. |
+| `CONFIG SET key value` | Set a runtime configuration value (admin only). |
+| `COMMAND LIST` | List all supported commands. |
+
+See [`protocol.toml`](protocol.toml) for the machine-readable protocol specification.
 
 ---
 
-## Operational Commands
+## CLI Subcommands
 
 ```sh
 # Health check without starting the server
 shroudb doctor --config config.toml
 
-# Re-key (rotate master encryption key — server must be stopped)
+# Re-key (rotate master encryption key -- server must be stopped)
 shroudb rekey --old-key <old> --new-key <new> --config config.toml
 
-# Export a keyspace to an encrypted bundle
-shroudb export my-keyspace --output backup.kvex --config config.toml
+# Export a namespace to an encrypted bundle
+shroudb export --namespace my-ns --output backup.kvex --config config.toml
 
-# Import into another instance (same master key required)
-shroudb import --file backup.kvex --keyspace my-keyspace --config config.toml
-
-# Purge a keyspace
-shroudb purge my-keyspace --config config.toml
+# Import from a bundle (same master key required)
+shroudb import --input backup.kvex [--namespace new-name] --config config.toml
 ```
 
 ---
@@ -221,19 +258,7 @@ Mount a volume at `/data` for durable storage. Without a volume, data is lost wh
 | `SHROUDB_MASTER_KEY_FILE` | Alternative | Path to a file containing the master key. |
 | `LOG_LEVEL` | No | Log level (`info`, `debug`, `warn`). Default: `info`. |
 
-Without a master key the server starts in dev mode with an ephemeral key — data will not survive restarts.
-
-### Config File
-
-Mount your config at any path and pass `--config`:
-
-```sh
-docker run -p 6399:6399 \
-  -e SHROUDB_MASTER_KEY="$(openssl rand -hex 32)" \
-  -v shroudb-data:/data \
-  -v ./config.toml:/config.toml:ro \
-  shroudb/shroudb --config /config.toml
-```
+Without a master key the server starts in dev mode with an ephemeral key -- data will not survive restarts.
 
 ### Docker Compose
 
@@ -267,8 +292,8 @@ docker compose up -d
 
 ShrouDB provides three telemetry channels:
 
-- **Console** — Structured JSON logs to stdout. Configurable log level via `LOG_LEVEL` environment variable.
-- **Audit log** — All credential operations are written to `{data_dir}/audit.log` for compliance and forensic review.
-- **OpenTelemetry** — OTLP export of traces and metrics to any OpenTelemetry-compatible backend. Configure with `otel_endpoint` in the server config.
+- **Console** -- Structured JSON logs to stdout. Configurable via `LOG_LEVEL`.
+- **Audit log** -- All data operations are written to `{data_dir}/audit.log` for compliance and forensic review.
+- **OpenTelemetry** -- OTLP export of traces and metrics to any OpenTelemetry-compatible backend. Configure with `metrics_bind` in the server config.
 
-All telemetry is handled by the shared `shroudb-telemetry` library across all ShrouDB engines.
+All telemetry is handled by the shared `shroudb-telemetry` library.

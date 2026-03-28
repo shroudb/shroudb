@@ -1,6 +1,6 @@
 # ShrouDB
 
-Encrypted credential vault with key rotation, RESP3 protocol, and WAL storage.
+Encrypted key-value database with version history, RESP3 protocol, and WAL storage.
 
 ## Quick Start
 
@@ -35,7 +35,7 @@ docker run -d \
 |----------|----------|-------------|
 | `SHROUDB_MASTER_KEY` | Yes (production) | 64 hex characters. Encrypts all data at rest. |
 | `SHROUDB_MASTER_KEY_FILE` | Alternative | Path to a file containing the master key. |
-| `LOG_LEVEL` | No | `info`, `debug`, `warn`. Default: `info`. |
+| `SHROUDB_LOG_LEVEL` | No | `info`, `debug`, `warn`. Default: `info`. |
 
 Without a master key the server starts in dev mode — data will not survive restarts.
 

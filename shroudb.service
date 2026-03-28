@@ -1,5 +1,5 @@
 [Unit]
-Description=ShrouDB Credential Management Server
+Description=ShrouDB Encrypted Key-Value Database
 Documentation=https://github.com/shroudb/shroudb
 After=network-online.target
 Wants=network-online.target

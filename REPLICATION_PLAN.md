@@ -1,5 +1,11 @@
 # Replication Plan
 
+> **Note:** This document was written for v0.1 (credential vault). The replication
+> architecture (WAL shipping, primary-replica topology, self-describing entries)
+> carries forward to v1. Metric names and command references (VERIFY, ISSUE, etc.)
+> should be read as v1 equivalents (GET, PUT, etc.). Per-keyspace encryption is now
+> per-namespace encryption.
+
 ## Status: Pre-decision
 
 This document exists to structure thinking about replication — not to commit to building it. The first phase is instrumentation: collect the data needed to decide whether replication is warranted, and if so, what topology fits.

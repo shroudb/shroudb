@@ -26,8 +26,8 @@ spec:
             - name: resp3
               containerPort: 6399
               protocol: TCP
-            - name: rest
-              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
               protocol: TCP
           env:
             - name: SHROUDB_MASTER_KEY
@@ -35,7 +35,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.masterKey.existingSecret | default (printf "%s-shroudb-master-key" .Release.Name) }}
                   key: {{ .Values.masterKey.secretKey }}
-            - name: RUST_LOG
+            - name: SHROUDB_LOG_LEVEL
               value: "info"
           volumeMounts:
             - name: data

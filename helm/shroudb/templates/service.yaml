@@ -12,10 +12,10 @@ spec:
       targetPort: resp3
       protocol: TCP
       name: resp3
-    - port: {{ .Values.service.restPort }}
-      targetPort: rest
+    - port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
       protocol: TCP
-      name: rest
+      name: metrics
   selector:
     app.kubernetes.io/name: shroudb
     app.kubernetes.io/instance: {{ .Release.Name }}
