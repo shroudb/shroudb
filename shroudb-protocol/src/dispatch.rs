@@ -46,6 +46,7 @@ impl<S: Store> CommandDispatcher<S> {
         if let Command::Pipeline {
             commands,
             request_id,
+            ..
         } = cmd
         {
             // Idempotency: return cached response if request_id was seen before

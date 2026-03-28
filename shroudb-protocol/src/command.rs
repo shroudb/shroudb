@@ -67,6 +67,10 @@ pub enum Command {
     },
 
     // ── Batch ────────────────────────────────────────────────────────
+    /// `PIPELINE [REQUEST_ID id] <cmd1> <cmd2> ...`
+    ///
+    /// A single RESP3 array containing "PIPELINE", optional keywords, and
+    /// nested arrays for each sub-command. Fully self-contained in one frame.
     Pipeline {
         commands: Vec<Command>,
         request_id: Option<String>,

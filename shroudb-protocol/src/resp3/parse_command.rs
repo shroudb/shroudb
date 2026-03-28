@@ -4,6 +4,10 @@ use crate::error::CommandError;
 use super::Resp3Frame;
 
 /// Convert a RESP3 frame (an array of bulk strings) into a `Command`.
+///
+/// Most commands are flat arrays of strings. PIPELINE is special: it's an array
+/// where the first element is "PIPELINE", optional REQUEST_ID args follow, and
+/// the remaining elements are nested arrays (one per sub-command).
 pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
     let parts = match frame {
         Resp3Frame::Array(parts) => parts,
@@ -14,16 +18,23 @@ pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
         }
     };
 
-    let strings: Vec<String> = parts
-        .into_iter()
-        .map(frame_to_string)
-        .collect::<Result<_, _>>()?;
-
-    if strings.is_empty() {
+    if parts.is_empty() {
         return Err(CommandError::BadArg {
             message: "empty command".into(),
         });
     }
+
+    // Check if this is a PIPELINE command (first element is "PIPELINE" string)
+    let verb = frame_to_string(parts[0].clone())?;
+    if verb.eq_ignore_ascii_case("PIPELINE") {
+        return parse_pipeline_frame(&parts[1..]);
+    }
+
+    // For all other commands, flatten to strings
+    let strings: Vec<String> = parts
+        .into_iter()
+        .map(frame_to_string)
+        .collect::<Result<_, _>>()?;
 
     let verb = strings[0].to_ascii_uppercase();
     let args = &strings[1..];
@@ -37,7 +48,6 @@ pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
         "LIST" => parse_list(args),
         "VERSIONS" => parse_versions(args),
         "NAMESPACE" => parse_namespace(args),
-        "PIPELINE" => parse_pipeline(&strings),
         "SUBSCRIBE" => parse_subscribe(args),
         "UNSUBSCRIBE" => Ok(Command::Unsubscribe),
         "HEALTH" => Ok(Command::Health),
@@ -464,37 +474,62 @@ fn parse_namespace(args: &[String]) -> Result<Command, CommandError> {
     }
 }
 
-// ── PIPELINE <count> ─────────────────────────────────────────────────
+// ── PIPELINE [REQUEST_ID id] <cmd1> <cmd2> ... ─────────────────────
 
-fn parse_pipeline(strings: &[String]) -> Result<Command, CommandError> {
-    require_args(&strings[1..], 1, "PIPELINE")?;
-    let count = strings[1]
-        .parse::<usize>()
-        .map_err(|_| CommandError::BadArg {
-            message: "PIPELINE requires a count".into(),
-        })?;
-    let _ = count; // count is informational; actual commands follow as separate frames
+/// Parse a PIPELINE command from the raw frame elements (after "PIPELINE").
+///
+/// Elements are either string keywords (REQUEST_ID) or nested arrays (sub-commands).
+/// Each sub-command array is recursively parsed via `parse_command`.
+fn parse_pipeline_frame(elements: &[Resp3Frame]) -> Result<Command, CommandError> {
+    if elements.is_empty() {
+        return Err(CommandError::BadArg {
+            message: "PIPELINE requires at least one command".into(),
+        });
+    }
 
-    // Optional REQUEST_ID keyword for idempotency
+    // Consume optional REQUEST_ID keyword from leading string elements
     let mut request_id = None;
-    let args = &strings[2..];
-    let mut i = 0;
-    while i < args.len() {
-        if args[i].eq_ignore_ascii_case("REQUEST_ID") {
-            if i + 1 >= args.len() {
+    let mut cmd_start = 0;
+
+    while cmd_start < elements.len() {
+        if matches!(&elements[cmd_start], Resp3Frame::Array(_)) {
+            break; // first sub-command array — stop consuming keywords
+        }
+
+        let s = frame_to_string(elements[cmd_start].clone())?;
+        if s.eq_ignore_ascii_case("REQUEST_ID") {
+            if cmd_start + 1 >= elements.len() {
                 return Err(CommandError::BadArg {
                     message: "REQUEST_ID requires a value".into(),
                 });
             }
-            request_id = Some(args[i + 1].clone());
-            i += 2;
+            request_id = Some(frame_to_string(elements[cmd_start + 1].clone())?);
+            cmd_start += 2;
         } else {
-            i += 1;
+            return Err(CommandError::BadArg {
+                message: format!("unexpected PIPELINE keyword: {s}"),
+            });
         }
     }
 
+    // Parse remaining elements as sub-commands
+    let mut commands = Vec::with_capacity(elements.len() - cmd_start);
+    for (i, frame) in elements[cmd_start..].iter().enumerate() {
+        let cmd = parse_command(frame.clone()).map_err(|e| CommandError::PipelineAborted {
+            index: i,
+            reason: e.to_string(),
+        })?;
+        commands.push(cmd);
+    }
+
+    if commands.is_empty() {
+        return Err(CommandError::BadArg {
+            message: "PIPELINE requires at least one command".into(),
+        });
+    }
+
     Ok(Command::Pipeline {
-        commands: Vec::new(),
+        commands,
         request_id,
     })
 }

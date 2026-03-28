@@ -1,8 +1,27 @@
 # ShrouDB v1 — Remaining Work
 
-**Status: Not production-ready.**
+**Status: Feature-complete. Test coverage gaps remain.**
 
-The core data path works (PUT/GET/DELETE/VERSIONS/LIST/NAMESPACE ops verified end-to-end via smoke tests). Security and correctness fixes have been applied to all critical and high-priority code quality issues. Missing features, test coverage gaps, and documentation remain.
+Core data path, all planned features, security fixes, and documentation are done. The remaining work is test coverage (error paths, concurrency, integration tests) and CI pipeline updates.
+
+## Feature Implementation Status
+
+| Feature | Status |
+|---------|--------|
+| F1 + F12: SUBSCRIBE connection handling | **Done** — connection-level streaming with RESP3 push frames |
+| F2: Webhooks | **Done** — HMAC-SHA256 signed HTTP delivery with retry |
+| F3: Pipeline idempotency | **Done** — IdempotencyMap with 5min TTL, REQUEST_ID keyword |
+| F4: Tombstone compaction | **Done** — scheduler reaper + TombstoneCompacted WAL entry |
+| F5: Config hot-reload | **Done** — ReloadableValidator + watch channel for rate limits |
+| F6: Export/Import | **Done** — AES-256-GCM encrypted bundles with namespace rename |
+| F7: Telemetry | **Done** — shroudb-telemetry: console + audit file + OTEL |
+| F8: Documentation | **Done** — DOCS.md, ABOUT.md, PROTOCOL.md fully rewritten |
+| F9: Helm charts | **Done** — updated for v1 config, metrics port, env vars |
+| F10: Systemd unit | **Done** — description updated, rest unchanged |
+| F11: wal-tool compat | **Done** — compiles against v0.2.3, no changes needed |
+| F13: CI/GitHub Actions | **Unchanged** — workflows are protocol-agnostic dispatchers |
+| F14: Client pipeline syntax | **Deferred** — no typed pipeline() method; use raw_command() |
+| F15: v0.1 test removal | **Done** — 34 credential tests deleted |
 
 ## What actually works
 
@@ -221,7 +240,7 @@ Also: `shroudb-server/tests/load_test.rs` and `shroudb-server/tests/memory_test.
 
 4. ~~**Pipeline GET uses placeholder WAL payload.**~~ **FIXED.** Staged vec changed to `Vec<Option<(OpType, WalPayload)>>`; GET stages `None`. (shroudb-storage/src/embedded_store.rs)
 
-5. **SUBSCRIBE never reaches the Store.** `dispatch.rs` returns an error for SUBSCRIBE. The connection handler doesn't intercept it like AUTH. **Not fixed — this is Feature 1/12.**
+5. ~~**SUBSCRIBE never reaches the Store.**~~ **FIXED.** Connection handler now intercepts SUBSCRIBE at connection level, enters streaming loop with RESP3 push frames, handles UNSUBSCRIBE. (shroudb-server/src/connection.rs)
 
 ### High — Should fix before release
 
@@ -334,7 +353,7 @@ All published crates are current:
 | 2 | Master key hex validation | **Fixed** |
 | 3 | Token expiry fails open | **Fixed** |
 | 4 | Pipeline GET placeholder | **Fixed** |
-| 5 | SUBSCRIBE not wired | Not fixed (Feature 1/12) |
+| 5 | SUBSCRIBE not wired | **Fixed** |
 | 6 | Version Debug formatting | **Fixed** |
 | 7 | Client silent defaults | **Fixed** |
 | 8 | Namespace drop race | **Mitigated** (documented TOCTOU) |
@@ -366,5 +385,5 @@ All published crates are current:
 | 34 | WAL namespace length u16 | **Fixed** |
 | 35 | Health transitions not guarded | **Fixed** |
 
-**Resolved: 27 fixed, 3 mitigated, 4 false positives, 1 deferred (Feature 1/12)**
+**Resolved: 28 fixed, 3 mitigated, 4 false positives**
 **Remaining: 1 low-risk (cursor skip)**

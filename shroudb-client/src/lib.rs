@@ -364,6 +364,76 @@ impl ShrouDBClient {
         }
     }
 
+    // ── Batch ────────────────────────────────────────────────────────
+
+    /// Execute a pipeline of commands.
+    ///
+    /// Each command is a slice of string arguments (e.g., `&["PUT", "ns", "key", "value"]`).
+    /// Returns one `Response` per command in the same order.
+    ///
+    /// Optionally pass a `request_id` for idempotency — retries with the same ID
+    /// return the cached response without re-executing.
+    ///
+    /// The entire pipeline is sent as a single RESP3 array: `PIPELINE` followed by
+    /// optional keywords, then each sub-command as a nested array.
+    pub async fn pipeline(
+        &mut self,
+        commands: &[&[&str]],
+        request_id: Option<&str>,
+    ) -> Result<Vec<Response>, ClientError> {
+        // Build a single RESP3 array: [PIPELINE, (REQUEST_ID, id)?, [cmd1], [cmd2], ...]
+        //
+        // Wire format:
+        //   *N\r\n
+        //   $8\r\nPIPELINE\r\n
+        //   [$10\r\nREQUEST_ID\r\n $<len>\r\n<id>\r\n]  (optional)
+        //   *M\r\n <cmd1 args as bulk strings> ...
+        //   *M\r\n <cmd2 args as bulk strings> ...
+
+        let keyword_count = if request_id.is_some() { 2 } else { 0 };
+        let total_elements = 1 + keyword_count + commands.len();
+
+        // Write outer array header
+        let header = format!("*{total_elements}\r\n");
+        self.connection.write_raw(header.as_bytes()).await?;
+
+        // Write "PIPELINE" as bulk string
+        self.connection.write_raw(b"$8\r\nPIPELINE\r\n").await?;
+
+        // Optional REQUEST_ID
+        if let Some(id) = request_id {
+            self.connection.write_raw(b"$10\r\nREQUEST_ID\r\n").await?;
+            let id_header = format!("${}\r\n", id.len());
+            self.connection.write_raw(id_header.as_bytes()).await?;
+            self.connection.write_raw(id.as_bytes()).await?;
+            self.connection.write_raw(b"\r\n").await?;
+        }
+
+        // Write each sub-command as a nested array
+        for cmd in commands {
+            let sub_header = format!("*{}\r\n", cmd.len());
+            self.connection.write_raw(sub_header.as_bytes()).await?;
+            for arg in *cmd {
+                let arg_header = format!("${}\r\n", arg.len());
+                self.connection.write_raw(arg_header.as_bytes()).await?;
+                self.connection.write_raw(arg.as_bytes()).await?;
+                self.connection.write_raw(b"\r\n").await?;
+            }
+        }
+
+        self.connection.flush().await?;
+
+        // Read the single pipeline response (an array of sub-responses)
+        let resp = self.connection.read_response().await?;
+        match resp {
+            Response::Array(items) => Ok(items),
+            Response::Error(e) => Err(ClientError::Server(e)),
+            _ => Err(ClientError::ResponseFormat(
+                "expected array response from PIPELINE".into(),
+            )),
+        }
+    }
+
     /// Send a raw command.
     pub async fn raw_command(&mut self, args: &[&str]) -> Result<Response, ClientError> {
         self.connection.send_command_strs(args).await

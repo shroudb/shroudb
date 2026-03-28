@@ -93,6 +93,27 @@ impl Connection {
         self.send_command(&owned).await
     }
 
+    /// Write raw bytes to the connection (for building custom frames like PIPELINE).
+    pub async fn write_raw(&mut self, data: &[u8]) -> Result<(), ClientError> {
+        self.writer.write_all(data).await?;
+        Ok(())
+    }
+
+    /// Flush the write buffer.
+    pub async fn flush(&mut self) -> Result<(), ClientError> {
+        self.writer.flush().await?;
+        Ok(())
+    }
+
+    /// Read a single response from the server.
+    pub async fn read_response(&mut self) -> Result<Response, ClientError> {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            read_value(&mut self.reader).await
+        })
+        .await
+        .map_err(|_| ClientError::Timeout)?
+    }
+
     async fn write_command(&mut self, args: &[String]) -> io::Result<()> {
         // *N\r\n followed by N bulk strings
         self.writer
@@ -107,10 +128,6 @@ impl Connection {
             self.writer.write_all(b"\r\n").await?;
         }
         Ok(())
-    }
-
-    async fn read_response(&mut self) -> Result<Response, ClientError> {
-        read_value(&mut self.reader).await
     }
 }
 
