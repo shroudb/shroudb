@@ -43,13 +43,16 @@ pub async fn handle_set(
         .await
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    // Update in-memory config store
-    engine.config_store().set(
-        key.to_string(),
-        value.to_string(),
-        timestamp,
-        shroudb_storage::ConfigSource::Runtime,
-    );
+    // Update in-memory config store (validates against schema)
+    engine
+        .config_store()
+        .set(
+            key.to_string(),
+            value.to_string(),
+            timestamp,
+            shroudb_storage::ConfigSource::Runtime,
+        )
+        .map_err(|e| CommandError::BadArg { message: e })?;
 
     Ok(ResponseMap::ok())
 }
