@@ -444,7 +444,9 @@ async fn run_doctor(
     }
 
     // 4. Storage engine recovery (validates WAL + snapshots)
-    let engine_config = config::to_engine_config(cfg);
+    // Doctor uses Strict mode to detect corruption that Recover would silently skip.
+    let mut engine_config = config::to_engine_config(cfg);
+    engine_config.recovery_mode = shroudb_storage::RecoveryMode::Strict;
     match StorageEngine::open(engine_config, key_source).await {
         Ok(engine) => {
             let ns_count = engine.index().namespaces.len();

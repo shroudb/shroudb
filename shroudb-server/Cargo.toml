@@ -46,3 +46,4 @@ ring.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
 tokio-rustls.workspace = true
+libc.workspace = true

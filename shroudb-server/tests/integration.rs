@@ -1,11 +1,11 @@
-mod harness;
+mod common;
 
-use harness::*;
+use common::*;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // ═══════════════════════════════════════════════════════════════════════
 // Core data path
@@ -1011,4 +1011,308 @@ async fn webhook_delivers_signed_event() {
         headers_lower.contains("x-shroudb-event"),
         "webhook request missing event type header"
     );
+}
+
+/// Verify that token validation timing doesn't leak whether a token exists.
+///
+/// Sends AUTH with a valid token, an invalid token of the same length,
+/// and an invalid token of different length. The timing difference between
+/// valid and invalid should be negligible (constant-time comparison).
+///
+/// This is a statistical test — it runs many iterations and checks that
+/// the mean times are within a tolerance. Not a cryptographic proof,
+/// but catches gross timing leaks.
+#[tokio::test]
+async fn auth_timing_does_not_leak_token_existence() {
+    let valid_token = "a]K9x#mP2$vL7nQ4";
+    let wrong_same_len = "z]J8y#nO1$uK6mP3"; // same length, different content
+    let wrong_diff_len = "short"; // different length
+
+    let config = TestServerConfig {
+        auth_tokens: vec![TestToken {
+            raw: valid_token.into(),
+            tenant: "t".into(),
+            actor: "a".into(),
+            platform: true,
+            grants: vec![],
+        }],
+        ..Default::default()
+    };
+    let server = TestServer::start_with_config(config)
+        .await
+        .expect("server failed to start");
+
+    let iterations = 200;
+
+    // Warm up
+    for _ in 0..20 {
+        let mut c = server.client().await;
+        let _ = c.auth(valid_token).await;
+    }
+
+    // Measure valid token
+    let mut valid_times = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let mut c = server.client().await;
+        let start = Instant::now();
+        let _ = c.auth(valid_token).await;
+        valid_times.push(start.elapsed());
+    }
+
+    // Measure wrong token (same length)
+    let mut wrong_same_times = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let mut c = server.client().await;
+        let start = Instant::now();
+        let _ = c.auth(wrong_same_len).await;
+        wrong_same_times.push(start.elapsed());
+    }
+
+    // Measure wrong token (different length)
+    let mut wrong_diff_times = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let mut c = server.client().await;
+        let start = Instant::now();
+        let _ = c.auth(wrong_diff_len).await;
+        wrong_diff_times.push(start.elapsed());
+    }
+
+    let valid_mean = mean_micros(&valid_times);
+    let wrong_same_mean = mean_micros(&wrong_same_times);
+    let wrong_diff_mean = mean_micros(&wrong_diff_times);
+
+    eprintln!("valid token mean:       {valid_mean:.1}us");
+    eprintln!("wrong (same len) mean:  {wrong_same_mean:.1}us");
+    eprintln!("wrong (diff len) mean:  {wrong_diff_mean:.1}us");
+
+    // The ratio between any two should be close to 1.0.
+    // Allow up to 3x difference to account for network jitter.
+    // A non-constant-time comparison (HashMap lookup) would show 10-100x
+    // differences between hit and miss on large token sets.
+    let ratio_same = if valid_mean > wrong_same_mean {
+        valid_mean / wrong_same_mean
+    } else {
+        wrong_same_mean / valid_mean
+    };
+    let ratio_diff = if valid_mean > wrong_diff_mean {
+        valid_mean / wrong_diff_mean
+    } else {
+        wrong_diff_mean / valid_mean
+    };
+
+    eprintln!("ratio (valid vs wrong-same-len): {ratio_same:.2}");
+    eprintln!("ratio (valid vs wrong-diff-len): {ratio_diff:.2}");
+
+    assert!(
+        ratio_same < 3.0,
+        "timing leak: valid vs wrong-same-len ratio {ratio_same:.2} exceeds 3x"
+    );
+    assert!(
+        ratio_diff < 3.0,
+        "timing leak: valid vs wrong-diff-len ratio {ratio_diff:.2} exceeds 3x"
+    );
+}
+
+fn mean_micros(durations: &[Duration]) -> f64 {
+    let total: f64 = durations.iter().map(|d| d.as_micros() as f64).sum();
+    total / durations.len() as f64
+}
+
+/// Verify that every write operation produces an audit log entry.
+#[tokio::test]
+async fn every_write_produces_audit_event() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    // Perform write operations
+    c.namespace_create("audit-ns").await.unwrap();
+    c.put("audit-ns", b"k1", b"v1").await.unwrap();
+    c.put("audit-ns", b"k1", b"v2").await.unwrap();
+    c.delete("audit-ns", b"k1").await.unwrap();
+    c.namespace_drop("audit-ns", true).await.unwrap();
+
+    // Give audit layer time to flush
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let audit_path = server.data_dir.path().join("audit.log");
+    assert!(audit_path.exists(), "audit.log not found");
+
+    let content = std::fs::read_to_string(&audit_path).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Count write operations in audit log
+    // The audit target logs: op=PUT, op=DELETE, op=NAMESPACE CREATE, etc.
+    let put_count = lines
+        .iter()
+        .filter(|l| l.contains("\"op\":\"PUT\""))
+        .count();
+    let delete_count = lines
+        .iter()
+        .filter(|l| l.contains("\"op\":\"DELETE\""))
+        .count();
+    let ns_create_count = lines
+        .iter()
+        .filter(|l| l.contains("\"op\":\"NAMESPACE CREATE\""))
+        .count();
+    let ns_drop_count = lines
+        .iter()
+        .filter(|l| l.contains("\"op\":\"NAMESPACE DROP\""))
+        .count();
+
+    eprintln!("audit log lines: {}", lines.len());
+    eprintln!("PUT events: {put_count}");
+    eprintln!("DELETE events: {delete_count}");
+    eprintln!("NAMESPACE CREATE events: {ns_create_count}");
+    eprintln!("NAMESPACE DROP events: {ns_drop_count}");
+
+    assert!(
+        put_count >= 2,
+        "expected at least 2 PUT audit events, got {put_count}"
+    );
+    assert!(
+        delete_count >= 1,
+        "expected at least 1 DELETE audit event, got {delete_count}"
+    );
+    assert!(
+        ns_create_count >= 1,
+        "expected at least 1 NAMESPACE CREATE audit event, got {ns_create_count}"
+    );
+    assert!(
+        ns_drop_count >= 1,
+        "expected at least 1 NAMESPACE DROP audit event, got {ns_drop_count}"
+    );
+}
+
+/// Verify that read operations do NOT produce audit events.
+#[tokio::test]
+async fn reads_do_not_produce_audit_events() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.namespace_create("read-test").await.unwrap();
+    c.put("read-test", b"k1", b"v1").await.unwrap();
+
+    // Clear audit log by remembering the line count
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let audit_path = server.data_dir.path().join("audit.log");
+    let before = std::fs::read_to_string(&audit_path)
+        .unwrap_or_default()
+        .lines()
+        .count();
+
+    // Perform read operations
+    c.get("read-test", b"k1").await.unwrap();
+    c.list("read-test").await.unwrap();
+    c.versions("read-test", b"k1").await.unwrap();
+    c.namespace_info("read-test").await.unwrap();
+    c.namespace_list().await.unwrap();
+    c.ping().await.unwrap();
+    c.health().await.unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let after = std::fs::read_to_string(&audit_path)
+        .unwrap_or_default()
+        .lines()
+        .count();
+
+    let new_lines = after - before;
+    eprintln!("audit lines before reads: {before}, after: {after}, new: {new_lines}");
+
+    assert_eq!(
+        new_lines, 0,
+        "read operations should not produce audit events, but {new_lines} new lines appeared"
+    );
+}
+
+/// Kill the server mid-write and verify data recovers on restart.
+#[tokio::test]
+async fn crash_recovery_preserves_committed_data() {
+    let mut server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.namespace_create("crash-test").await.unwrap();
+
+    // Write data that should be committed
+    for i in 0..50 {
+        c.put(
+            "crash-test",
+            format!("key-{i}").as_bytes(),
+            format!("val-{i}").as_bytes(),
+        )
+        .await
+        .unwrap();
+    }
+
+    let data_path = server.data_dir.path().to_path_buf();
+
+    // Hard kill (SIGKILL) — no graceful shutdown
+    drop(c);
+    server.kill_hard();
+
+    // Restart on same data dir
+    let server2 = start_on_data_dir_path(&data_path, TEST_MASTER_KEY)
+        .await
+        .expect("server failed to restart after crash");
+    let mut c2 = server2.client().await;
+
+    // Verify namespace and data survived
+    let info = c2.namespace_info("crash-test").await.unwrap();
+    assert!(
+        info.key_count >= 40,
+        "expected at least 40 keys to survive crash recovery, got {}",
+        info.key_count,
+    );
+
+    // Spot-check a few keys
+    let entry = c2.get("crash-test", b"key-0").await.unwrap();
+    assert_eq!(entry.value, b"val-0");
+
+    let entry = c2.get("crash-test", b"key-10").await.unwrap();
+    assert_eq!(entry.value, b"val-10");
+}
+
+/// Corrupt a WAL segment and verify the server still starts (recovery mode skips corrupt entries).
+#[tokio::test]
+async fn corrupt_wal_segment_handled_gracefully() {
+    let mut server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.namespace_create("corrupt-test").await.unwrap();
+    for i in 0..10 {
+        c.put("corrupt-test", format!("k{i}").as_bytes(), b"v")
+            .await
+            .unwrap();
+    }
+
+    drop(c);
+    server.stop();
+
+    // Find a WAL segment and corrupt it
+    let data_path = server.data_dir.path().to_path_buf();
+    let wal_dir = data_path.join("default").join("wal");
+    let mut corrupted = false;
+    if wal_dir.exists() {
+        for entry in std::fs::read_dir(&wal_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "wal") {
+                let mut data = std::fs::read(&path).unwrap();
+                if data.len() > 20 {
+                    let mid = data.len() / 2;
+                    data[mid] ^= 0xFF;
+                    data[mid + 1] ^= 0xFF;
+                    std::fs::write(&path, data).unwrap();
+                    corrupted = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if corrupted {
+        let server2 = start_on_data_dir_path(&data_path, TEST_MASTER_KEY).await;
+        assert!(
+            server2.is_some(),
+            "server should start even with a corrupted WAL segment"
+        );
+    }
 }

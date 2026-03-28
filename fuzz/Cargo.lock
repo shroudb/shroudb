@@ -1047,11 +1047,12 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shroudb-acl"
-version = "0.1.1"
+version = "0.1.2"
 source = "sparse+https://crates.shroudb.dev/api/v1/crates/"
-checksum = "7cda96a85366ce3039018b0e89d01aaa867a70e339475e0c4996eb50c275807e"
+checksum = "10fff64d690badac1dc67de5c189e677f71299273872f7ea7e3bd4b1a6426ec5"
 dependencies = [
  "serde",
+ "shroudb-crypto",
  "thiserror",
 ]
 
@@ -1098,10 +1099,12 @@ name = "shroudb-protocol"
 version = "0.1.1"
 dependencies = [
  "bytes",
+ "dashmap",
  "metrics",
  "serde",
  "serde_json",
  "shroudb-acl",
+ "shroudb-storage",
  "shroudb-store",
  "thiserror",
  "tokio",
@@ -1110,9 +1113,9 @@ dependencies = [
 
 [[package]]
 name = "shroudb-storage"
-version = "0.2.0"
+version = "0.2.5"
 source = "sparse+https://crates.shroudb.dev/api/v1/crates/"
-checksum = "bb8891ebe7f7e948a0b1038cfcd78dc38656dce3dd6757bc7dd31c7608a41354"
+checksum = "a922020fd420d702c0dead59a01e878069dd3d375e747a92d839aa5c50b1918e"
 dependencies = [
  "crc32fast",
  "dashmap",
@@ -1127,13 +1130,14 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
 name = "shroudb-store"
-version = "0.1.0"
+version = "0.1.2"
 source = "sparse+https://crates.shroudb.dev/api/v1/crates/"
-checksum = "318fb583b0e935a3e57014457bdef14723a838ea745dfc8a5b25d1a90dbaf136"
+checksum = "0694dcb4e2f2736fd129dcffda5f6c95e6e442cb5511276490808a17b9591e33"
 dependencies = [
  "serde",
  "serde_json",
@@ -1757,15 +1761,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[patch.unused]]
-name = "shroudb-core"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "shroudb-crypto"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "shroudb-storage"
-version = "0.2.0"

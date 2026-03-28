@@ -24,7 +24,7 @@ shroudb-client = { path = "shroudb-client", version = "0.1.1", registry = "shrou
 # Commons crates (shroudb registry)
 shroudb-acl = { version = "0.1.2", registry = "shroudb" }
 shroudb-crypto = { version = "0.1.0", registry = "shroudb" }
-shroudb-storage = { version = "0.2.5", registry = "shroudb" }
+shroudb-storage = { version = "0.2.6", registry = "shroudb" }
 shroudb-store = { version = "0.1.2", registry = "shroudb" }
 shroudb-telemetry = { version = "0.1.0", registry = "shroudb" }
 

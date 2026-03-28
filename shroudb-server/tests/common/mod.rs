@@ -158,6 +158,15 @@ impl TestServer {
         let _ = self.child.wait();
     }
 
+    /// Send SIGKILL (hard crash, no graceful shutdown) then wait.
+    #[cfg(unix)]
+    pub fn kill_hard(&mut self) {
+        unsafe {
+            libc::kill(self.child.id() as libc::pid_t, libc::SIGKILL);
+        }
+        let _ = self.child.wait();
+    }
+
     /// Wait for the server to respond to PING.
     async fn wait_ready(&mut self, timeout: Duration) -> bool {
         self.wait_ready_tcp(timeout).await
@@ -246,6 +255,53 @@ pub async fn start_on_data_dir(
         child,
         addr: addr.clone(),
         data_dir,
+        config_dir,
+        master_key: master_key.to_string(),
+    };
+
+    if !server.wait_ready(Duration::from_secs(10)).await {
+        eprintln!("server failed to start on port {port}");
+        return None;
+    }
+
+    Some(server)
+}
+
+/// Start a server on an existing data directory path (for crash recovery tests).
+/// The caller manages the directory lifetime.
+pub async fn start_on_data_dir_path(data_dir: &Path, master_key: &str) -> Option<TestServer> {
+    let binary = find_binary()?;
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+
+    // We need a config_dir TempDir for the struct, but the config already exists.
+    // Create a new temp dir and copy the config into it.
+    let config_dir = tempfile::tempdir().ok()?;
+    let new_config_path = config_dir.path().join("config.toml");
+    let toml = generate_config(&addr, &TestServerConfig::default());
+    std::fs::write(&new_config_path, toml).ok()?;
+
+    let child = Command::new(&binary)
+        .arg("--config")
+        .arg(&new_config_path)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("--log-level")
+        .arg("warn")
+        .env("SHROUDB_MASTER_KEY", master_key)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    // We need a TempDir for data_dir field but we don't own it.
+    // Create a dummy TempDir that points nowhere — the actual data lives at data_dir.
+    let dummy_data_dir = tempfile::tempdir().ok()?;
+
+    let mut server = TestServer {
+        child,
+        addr: addr.clone(),
+        data_dir: dummy_data_dir,
         config_dir,
         master_key: master_key.to_string(),
     };

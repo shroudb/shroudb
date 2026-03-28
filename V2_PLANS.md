@@ -1,6 +1,6 @@
 # ShrouDB v2 — Distribution & Engine Migration
 
-**Prerequisite:** v1 integration tests pass for all 14 features. See V1_REMAINING.md.
+v2 is about scale, not correctness. v1 must be fully hardened before any v2 work begins.
 
 ## Engine migration (v0.2 engines)
 
@@ -70,13 +70,3 @@ Namespaces are the shard boundary. Each already has its own encryption key, WAL 
 - Wire protocol (RESP3)
 - Store trait contract
 - Auth/ACL model
-
-## Operational maturity
-
-- Fuzz testing in CI (targets exist, need nightly runner)
-- Chaos testing (kill mid-write, corrupt WAL, verify recovery)
-- Performance benchmarks (PUT/GET/LIST latency at various data sizes)
-- Timing analysis on auth paths (verify constant-time with measurements)
-- TLS audit with testssl.sh
-- Formal threat model document
-- Audit trail completeness verification
