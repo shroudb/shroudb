@@ -345,6 +345,56 @@ pub fn run_offline_subcommand_with_key(
         .expect("failed to run subcommand")
 }
 
+/// Start a server on an existing data directory path with cache config.
+pub async fn start_on_data_dir_path_with_cache(
+    data_dir: &Path,
+    master_key: &str,
+    cache_budget: &str,
+) -> Option<TestServer> {
+    let binary = find_binary()?;
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+
+    let config_dir = tempfile::tempdir().ok()?;
+    let config = TestServerConfig {
+        cache_memory_budget: Some(cache_budget.to_string()),
+        ..Default::default()
+    };
+    let new_config_path = config_dir.path().join("config.toml");
+    let toml = generate_config(&addr, &config);
+    std::fs::write(&new_config_path, toml).ok()?;
+
+    let child = Command::new(&binary)
+        .arg("--config")
+        .arg(&new_config_path)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .arg("--log-level")
+        .arg("warn")
+        .env("SHROUDB_MASTER_KEY", master_key)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let dummy_data_dir = tempfile::tempdir().ok()?;
+
+    let mut server = TestServer {
+        child,
+        addr: addr.clone(),
+        data_dir: dummy_data_dir,
+        config_dir,
+        master_key: master_key.to_string(),
+    };
+
+    if !server.wait_ready(std::time::Duration::from_secs(10)).await {
+        eprintln!("server failed to start on port {port} (cache restart)");
+        return None;
+    }
+
+    Some(server)
+}
+
 fn generate_config(bind: &str, config: &TestServerConfig) -> String {
     let mut toml = format!(
         r#"[server]

@@ -1512,3 +1512,60 @@ async fn cache_unlimited_mode_default() {
     let result = c.get("no-cache", b"key").await.unwrap();
     assert_eq!(result.value, b"value");
 }
+
+/// Write data with cache enabled, restart the server, verify all data
+/// survives the restart. This tests the vlog lifecycle: post-recovery
+/// vlog build → eviction with vlog locations → vlog-based recovery.
+#[tokio::test]
+async fn cache_survives_restart() {
+    // Phase 1: start server with cache, write data, hard kill
+    let mut server = TestServer::start_with_config(TestServerConfig {
+        cache_memory_budget: Some("1kb".to_string()),
+        ..Default::default()
+    })
+    .await
+    .expect("server with cache failed to start");
+
+    let mut c = server.client().await;
+    c.namespace_create("persist").await.unwrap();
+
+    for i in 0..20u32 {
+        let key = format!("key:{i:04}");
+        let value = vec![(i & 0xFF) as u8; 200];
+        c.put("persist", key.as_bytes(), &value).await.unwrap();
+    }
+
+    // Give batched fsync time to flush
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let data_path = server.data_dir.path().to_path_buf();
+    drop(c);
+    server.kill_hard();
+
+    // Phase 2: restart on same data dir with cache enabled
+    let server2 = start_on_data_dir_path_with_cache(&data_path, TEST_MASTER_KEY, "1kb")
+        .await
+        .expect("server failed to restart with cache");
+
+    let mut c2 = server2.client().await;
+
+    // Most entries should survive (some may be lost due to SIGKILL)
+    let page = c2.list("persist").await.unwrap();
+    assert!(
+        page.items.len() >= 15,
+        "expected at least 15 keys after crash recovery with cache, got {}",
+        page.items.len()
+    );
+
+    // Spot-check early entries (definitely flushed)
+    let result = c2
+        .get("persist", b"key:0000")
+        .await
+        .unwrap_or_else(|e| panic!("failed to get key:0000 after restart: {e}"));
+    assert_eq!(result.value, vec![0u8; 200]);
+
+    // Write new data after restart
+    c2.put("persist", b"post-restart", b"works").await.unwrap();
+    let result = c2.get("persist", b"post-restart").await.unwrap();
+    assert_eq!(result.value, b"works");
+}
