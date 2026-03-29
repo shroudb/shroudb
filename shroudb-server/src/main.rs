@@ -644,7 +644,11 @@ async fn run_rekey(
                                 OpType::EntryPut,
                                 WalPayload::EntryPut {
                                     key: key.clone(),
-                                    value: record.value.clone(),
+                                    value: record
+                                        .value
+                                        .as_bytes()
+                                        .expect("value must be resident during import")
+                                        .to_vec(),
                                     metadata: record.metadata.clone(),
                                     version,
                                     actor: record.actor.clone(),
@@ -775,7 +779,11 @@ async fn run_export(
                     shroudb_store::EntryState::Active => 0,
                     shroudb_store::EntryState::Deleted => 1,
                 },
-                value: record.value.clone(),
+                value: record
+                    .value
+                    .as_bytes()
+                    .expect("value must be resident during export")
+                    .to_vec(),
                 metadata: record.metadata.clone(),
                 updated_at: record.updated_at,
                 actor: record.actor.clone(),

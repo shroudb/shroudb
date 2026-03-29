@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::Deserialize;
 use shroudb_acl::{Scope, StaticTokenValidator, Token, TokenGrant};
+use shroudb_storage::engine::CacheMemoryBudget;
 use shroudb_storage::{StorageEngineConfig, wal::writer::FsyncMode};
 use shroudb_store::Namespace;
 
@@ -112,6 +113,8 @@ pub struct StorageConfig {
     pub snapshot_interval_entries: Option<u64>,
     #[serde(default)]
     pub snapshot_interval_minutes: Option<u64>,
+    #[serde(default)]
+    pub cache: Option<CacheConfig>,
 }
 
 impl Default for StorageConfig {
@@ -125,8 +128,65 @@ impl Default for StorageConfig {
             max_segment_entries: None,
             snapshot_interval_entries: None,
             snapshot_interval_minutes: None,
+            cache: None,
         }
     }
+}
+
+/// Configuration for the bounded KV index cache.
+///
+/// ```toml
+/// [storage.cache]
+/// memory_budget = "256mb"   # explicit byte limit
+/// # memory_budget = "70%"   # fraction of system memory
+/// # (omit for auto: 50% of system RAM, capped at 4 GiB)
+/// ```
+///
+/// When this section is absent, the cache is unlimited (all values stay in memory).
+#[derive(Debug, Deserialize)]
+pub struct CacheConfig {
+    /// Memory budget: `"256mb"`, `"1gb"`, `"70%"`, or `"auto"`.
+    /// Absent = unlimited (no eviction).
+    #[serde(default)]
+    pub memory_budget: Option<String>,
+}
+
+/// Parse a memory budget string into a `CacheMemoryBudget`.
+fn parse_memory_budget(input: &str) -> anyhow::Result<CacheMemoryBudget> {
+    let input = input.trim().to_lowercase();
+
+    if input == "auto" {
+        return Ok(CacheMemoryBudget::Auto);
+    }
+
+    if let Some(pct) = input.strip_suffix('%') {
+        let frac: f64 = pct
+            .trim()
+            .parse()
+            .with_context(|| format!("invalid percentage: {input}"))?;
+        if !(0.0..=100.0).contains(&frac) {
+            anyhow::bail!("percentage must be 0-100, got: {frac}");
+        }
+        return Ok(CacheMemoryBudget::Fractional(frac / 100.0));
+    }
+
+    // Parse byte sizes: "256mb", "1gb", "512kb", or plain number (bytes)
+    let (num_str, multiplier) = if let Some(n) = input.strip_suffix("gb") {
+        (n, 1024 * 1024 * 1024)
+    } else if let Some(n) = input.strip_suffix("mb") {
+        (n, 1024 * 1024)
+    } else if let Some(n) = input.strip_suffix("kb") {
+        (n, 1024)
+    } else {
+        (input.as_str(), 1)
+    };
+
+    let num: f64 = num_str
+        .trim()
+        .parse()
+        .with_context(|| format!("invalid memory budget: {input}"))?;
+    let bytes = (num * multiplier as f64) as usize;
+    Ok(CacheMemoryBudget::Explicit(bytes))
 }
 
 fn default_data_dir() -> PathBuf {
@@ -206,6 +266,7 @@ fn expand_env_vars(input: &str) -> String {
 /// Build a StorageEngineConfig from the parsed TOML.
 pub fn to_engine_config(config: &ShrouDBConfig) -> StorageEngineConfig {
     let fsync_mode = to_fsync_mode(&config.storage);
+    let cache_memory_budget = to_cache_budget(&config.storage);
 
     StorageEngineConfig {
         data_dir: config.storage.data_dir.clone(),
@@ -219,7 +280,29 @@ pub fn to_engine_config(config: &ShrouDBConfig) -> StorageEngineConfig {
             .snapshot_interval_minutes
             .map(|m| m * 60)
             .unwrap_or(3600),
+        cache_memory_budget,
         ..Default::default()
+    }
+}
+
+fn to_cache_budget(storage: &StorageConfig) -> CacheMemoryBudget {
+    let Some(cache) = &storage.cache else {
+        return CacheMemoryBudget::Unlimited;
+    };
+    let Some(budget_str) = &cache.memory_budget else {
+        // Section present but no budget specified → auto
+        return CacheMemoryBudget::Auto;
+    };
+    match parse_memory_budget(budget_str) {
+        Ok(budget) => budget,
+        Err(e) => {
+            tracing::warn!(
+                input = %budget_str,
+                error = %e,
+                "invalid cache.memory_budget, falling back to unlimited"
+            );
+            CacheMemoryBudget::Unlimited
+        }
     }
 }
 
