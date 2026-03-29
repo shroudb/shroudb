@@ -49,6 +49,7 @@ ShrouDB is a **standalone encrypted key-value database** -- not a credential vau
 
 - **Authentication:** Token-based auth with ACL grants scoped per namespace. Tokens are configured statically and applied on restart; hot-reload is supported for token and rate-limit changes.
 - **Durability:** Write-ahead log with periodic snapshots. Crash recovery replays the WAL from the last consistent snapshot.
+- **Memory-bounded index:** Optionally limits in-memory value storage to a configured budget. Cold values are evicted to an encrypted value log and recovered transparently on read. Sizes itself to the instance with `"auto"` or `"70%"` budgets.
 - **Idempotency:** Pipeline requests carry request IDs for exactly-once semantics on retries.
 - **Export/Import:** Namespaces can be exported and imported for migration between instances.
 - **Observability:** Prometheus metrics, OpenTelemetry export, audit file logging, structured tracing.

@@ -119,6 +119,43 @@ data_dir = "./data"
 # snapshot_interval_minutes = 60
 ```
 
+#### [storage.cache]
+
+Controls the bounded index — how much memory the KV index uses for value storage. By default, all values are held in memory. When a budget is configured, cold values are evicted to disk and recovered transparently on access.
+
+```toml
+[storage.cache]
+memory_budget = "256mb"    # explicit byte limit
+# memory_budget = "70%"   # fraction of system RAM
+# memory_budget = "auto"  # 50% of system RAM, capped at 4 GiB
+```
+
+Omit this section entirely to keep all values in memory (no eviction).
+
+**Eviction behavior:**
+
+- **Version-level (automatic):** Only the two most recent versions (N and N-1) of each key stay resident. Older versions are evicted on write.
+- **Key-level (LRU):** When total resident memory exceeds the budget, entire keys are evicted based on least-recent access.
+
+Evicted values are recovered from the value log (vlog) or WAL on read. Cache misses are transparent to clients — `GET` always returns the correct value.
+
+**Tuning:** Choose a budget based on your instance size, not your dataset size. On managed platforms (Fly, Railway) where container memory is the constraint, `"70%"` or `"auto"` means zero tuning — the cache sizes itself to the instance.
+
+**Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `shroudb_cache_hit_total` | counter | Reads served from memory (per namespace) |
+| `shroudb_cache_miss_total` | counter | Reads recovered from disk (per namespace) |
+| `shroudb_cache_eviction_total` | counter | Keys evicted by LRU (per namespace) |
+| `shroudb_cache_memory_bytes` | gauge | Current resident value memory |
+| `shroudb_cache_resident_keys` | gauge | Number of keys with resident values |
+| `shroudb_cache_budget_bytes` | gauge | Configured memory budget |
+
+Monitor `shroudb_cache_miss_total` to determine if the budget is well-sized. A climbing miss rate means the working set exceeds the budget.
+
+**Compaction interaction:** The cache evicts values but retains key metadata (version numbers, timestamps, state). Compaction (`max_versions` and `tombstone_retention_secs` on namespace config) removes entire version records and tombstones, reducing metadata overhead. Tighter compaction settings complement the cache budget — fewer retained versions means less per-key metadata even for evicted keys.
+
 #### [auth]
 
 When `auth.method = "token"`, clients must `AUTH` with a configured token before any command except `PING` is accepted. Each token defines a tenant, actor identity, and namespace grants.

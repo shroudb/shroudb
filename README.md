@@ -133,6 +133,13 @@ export SHROUDB_MASTER_KEY="<64-hex-chars>"  # set it
 
 Without a master key, dev mode uses an ephemeral key — data won't survive restarts.
 
+**Memory-bounded index:** For large datasets, configure `[storage.cache]` to limit how much value data stays in memory. Cold values are evicted to disk and recovered transparently on read.
+
+```toml
+[storage.cache]
+memory_budget = "256mb"   # or "70%", "auto", or omit for unlimited
+```
+
 See [`config.example.toml`](config.example.toml) for all options.
 
 ## Installation

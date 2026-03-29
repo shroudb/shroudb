@@ -26,6 +26,21 @@ data_dir = "./data"
 # snapshot_interval_entries = 100000
 # snapshot_interval_minutes = 60
 
+# --- Cache (bounded index) ---
+#
+# By default, all values are held in memory. For large datasets, configure
+# a memory budget so the index evicts cold values to disk and recovers
+# them on demand (transparent to clients).
+#
+# [storage.cache]
+# memory_budget = "256mb"          # explicit: "256mb", "1gb", "512kb"
+# memory_budget = "70%"            # fraction of system RAM
+# memory_budget = "auto"           # 50% of system RAM, capped at 4 GiB
+#
+# Omit this section entirely to keep all values in memory (unlimited).
+# Metrics: shroudb_cache_hit_total, shroudb_cache_miss_total,
+#          shroudb_cache_eviction_total, shroudb_cache_memory_bytes
+
 # --- Authentication ---
 #
 # When auth.method = "token", clients must AUTH with a configured token
