@@ -2395,9 +2395,9 @@ dependencies = [
 
 [[package]]
 name = "shroudb-storage"
-version = "0.2.7"
+version = "0.2.8"
 source = "sparse+https://crates.shroudb.dev/api/v1/crates/"
-checksum = "e2f9469b915c622c5ae466a0adbdb26ae995a6384764004de9c9bbcbb8facd25"
+checksum = "5291d46acffb022e5393ea37dd0462dd523863d44519f3b90cc8c0797cda18ad"
 dependencies = [
  "crc32fast",
  "dashmap",

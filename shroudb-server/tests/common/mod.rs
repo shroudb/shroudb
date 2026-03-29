@@ -39,6 +39,8 @@ pub struct TestServerConfig {
     pub tls_cert: Option<PathBuf>,
     pub tls_key: Option<PathBuf>,
     pub master_key: Option<String>,
+    /// Cache memory budget (e.g., "1kb", "256mb", "70%"). None = unlimited.
+    pub cache_memory_budget: Option<String>,
 }
 
 pub struct TestToken {
@@ -362,6 +364,12 @@ bind = "{bind}"
     }
 
     toml.push_str("\n[storage]\n");
+
+    if let Some(ref budget) = config.cache_memory_budget {
+        toml.push_str(&format!(
+            "\n[storage.cache]\nmemory_budget = \"{budget}\"\n"
+        ));
+    }
 
     if !config.auth_tokens.is_empty() {
         toml.push_str("\n[auth]\nmethod = \"token\"\n\n");

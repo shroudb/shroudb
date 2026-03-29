@@ -581,6 +581,7 @@ async fn run_rekey(
                     metadata: record.metadata.clone(),
                     updated_at: record.updated_at,
                     actor: record.actor.clone(),
+                    wal_position: record.wal_position,
                 })
                 .collect();
             keys.push((key, versions));

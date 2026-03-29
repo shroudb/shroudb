@@ -1411,3 +1411,104 @@ async fn remote_store_namespace_lifecycle() {
     let result = store.namespace_info("rs-ns").await;
     assert!(result.is_err());
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Bounded index / cache
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Start with a tiny cache budget, write enough data to trigger eviction,
+/// then verify all data is still readable (cache miss → WAL recovery).
+#[tokio::test]
+async fn cache_bounded_index_eviction_and_recovery() {
+    let server = TestServer::start_with_config(TestServerConfig {
+        // 1 KB budget — a handful of entries will exceed this
+        cache_memory_budget: Some("1kb".to_string()),
+        ..Default::default()
+    })
+    .await
+    .expect("server with cache config failed to start");
+
+    let mut c = server.client().await;
+
+    // Create namespace and write enough data to exceed the 1KB budget.
+    // Each value is 200 bytes, so 10 entries = ~2KB of values alone.
+    c.namespace_create("cache-test").await.unwrap();
+
+    let entry_count = 10;
+    let value_size = 200;
+    for i in 0..entry_count {
+        let key = format!("key:{i:04}");
+        let value = vec![(i & 0xFF) as u8; value_size];
+        c.put("cache-test", key.as_bytes(), &value).await.unwrap();
+    }
+
+    // Read all entries back. Some will be cache hits, some will be
+    // cache misses that recover from WAL. All must return correct data.
+    for i in 0..entry_count {
+        let key = format!("key:{i:04}");
+        let expected_value = vec![(i & 0xFF) as u8; value_size];
+        let result = c.get("cache-test", key.as_bytes()).await.unwrap();
+        assert_eq!(
+            result.value, expected_value,
+            "value mismatch for {key} (cache miss recovery failed?)"
+        );
+        assert_eq!(result.version, 1);
+    }
+
+    // LIST must return all keys regardless of eviction state
+    let page = c.list("cache-test").await.unwrap();
+    assert_eq!(page.items.len(), entry_count as usize);
+
+    // Write more versions to trigger old-version eviction (keep N and N-1)
+    for i in 0..3u32 {
+        let key = format!("key:{i:04}");
+        for v in 2..=5u64 {
+            let value = vec![((i as u64 + v) & 0xFF) as u8; value_size];
+            c.put("cache-test", key.as_bytes(), &value).await.unwrap();
+        }
+    }
+
+    // Read latest version — should work
+    for i in 0..3u32 {
+        let key = format!("key:{i:04}");
+        let result = c.get("cache-test", key.as_bytes()).await.unwrap();
+        assert_eq!(result.version, 5, "expected version 5 for {key}");
+    }
+
+    // Read old version (v1) — should work via WAL recovery even though
+    // old versions are evicted
+    for i in 0..3u32 {
+        let key = format!("key:{i:04}");
+        let result = c
+            .get_version("cache-test", key.as_bytes(), 1)
+            .await
+            .unwrap();
+        let expected_value = vec![(i & 0xFF) as u8; value_size];
+        assert_eq!(
+            result.value, expected_value,
+            "old version recovery failed for {key}"
+        );
+    }
+
+    // VERSIONS must still report all versions
+    let versions = c.versions("cache-test", b"key:0000").await.unwrap();
+    assert_eq!(versions.len(), 5);
+
+    // DELETE should work on evicted keys
+    c.delete("cache-test", b"key:0009").await.unwrap();
+    let err = c.get("cache-test", b"key:0009").await;
+    assert!(err.is_err(), "deleted key should not be found");
+}
+
+/// Verify the server starts and works normally with no cache config
+/// (unlimited mode, backward compat).
+#[tokio::test]
+async fn cache_unlimited_mode_default() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.namespace_create("no-cache").await.unwrap();
+    c.put("no-cache", b"key", b"value").await.unwrap();
+    let result = c.get("no-cache", b"key").await.unwrap();
+    assert_eq!(result.value, b"value");
+}
