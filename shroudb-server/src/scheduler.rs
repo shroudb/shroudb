@@ -100,6 +100,15 @@ pub fn spawn_all<S: Store + 'static>(
                             .sum();
                         metrics::gauge!("shroudb_active_keys_total")
                             .set(total_keys as f64);
+
+                        if let Some(tracker) = engine.cache_tracker() {
+                            metrics::gauge!("shroudb_cache_memory_bytes")
+                                .set(tracker.total_bytes() as f64);
+                            metrics::gauge!("shroudb_cache_resident_keys")
+                                .set(tracker.len() as f64);
+                            metrics::gauge!("shroudb_cache_budget_bytes")
+                                .set(tracker.budget_bytes() as f64);
+                        }
                     }
                 }
             }
