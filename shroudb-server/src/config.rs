@@ -92,7 +92,7 @@ impl Default for ServerConfig {
 }
 
 fn default_bind() -> SocketAddr {
-    "0.0.0.0:6399".parse().unwrap()
+    "0.0.0.0:6399".parse().expect("valid hardcoded address")
 }
 
 #[derive(Debug, Deserialize)]
