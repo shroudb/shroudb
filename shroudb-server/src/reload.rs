@@ -33,18 +33,30 @@ impl ReloadableValidator {
 
     /// Replace the inner validator with a new one.
     pub fn replace(&self, validator: StaticTokenValidator) {
-        *self.inner.write().unwrap() = validator;
+        match self.inner.write() {
+            Ok(mut guard) => *guard = validator,
+            Err(poisoned) => {
+                tracing::error!("validator lock poisoned, recovering");
+                *poisoned.into_inner() = validator;
+            }
+        }
     }
 
     /// Number of registered tokens.
     pub fn len(&self) -> usize {
-        self.inner.read().unwrap().len()
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
     }
 }
 
 impl TokenValidator for ReloadableValidator {
     fn validate(&self, raw: &str) -> Result<Token, AclError> {
-        self.inner.read().unwrap().validate(raw)
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .validate(raw)
     }
 }
 

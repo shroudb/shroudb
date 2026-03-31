@@ -872,7 +872,11 @@ async fn run_import(
     }
 
     // Parse header
-    let header_len = u32::from_le_bytes(bundle[4..8].try_into().unwrap()) as usize;
+    let header_len = u32::from_le_bytes(
+        bundle[4..8]
+            .try_into()
+            .context("invalid export file: header length truncated")?,
+    ) as usize;
     if bundle.len() < 8 + header_len {
         anyhow::bail!("invalid export file: truncated header");
     }
@@ -947,8 +951,10 @@ async fn run_import(
     // Start from end, work backwards
     let mut ns_config = None;
     for try_offset in (encrypted_start..bundle.len().saturating_sub(4)).rev() {
-        let candidate_len =
-            u32::from_le_bytes(bundle[try_offset..try_offset + 4].try_into().unwrap()) as usize;
+        let Ok(len_bytes) = bundle[try_offset..try_offset + 4].try_into() else {
+            continue;
+        };
+        let candidate_len = u32::from_le_bytes(len_bytes) as usize;
         if try_offset + 4 + candidate_len == bundle.len() && candidate_len < 1_000_000 {
             // Try parsing as JSON
             let config_bytes = &bundle[try_offset + 4..];
