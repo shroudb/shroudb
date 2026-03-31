@@ -232,14 +232,8 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("no config file found at default path, using defaults");
     }
 
-    // Disable core dumps on Linux
-    #[cfg(target_os = "linux")]
-    {
-        unsafe {
-            libc::prctl(libc::PR_SET_DUMPABLE, 0);
-        }
-        tracing::debug!("core dumps disabled");
-    }
+    // Disable core dumps (Linux + macOS)
+    shroudb_crypto::disable_core_dumps();
 
     // (CLI overrides already applied above, before telemetry init)
 
