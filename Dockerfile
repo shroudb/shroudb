@@ -23,6 +23,7 @@ RUN --mount=type=secret,id=registry_token \
 # --- shroudb: credential management server ---
 FROM alpine:3.21 AS shroudb
 RUN adduser -D -u 65532 shroudb && \
+    apk add --no-cache su-exec && \
     mkdir /data && chown shroudb:shroudb /data
 LABEL org.opencontainers.image.title="ShrouDB" \
       org.opencontainers.image.description="Encrypted key-value database with namespaces, versioning, and RESP3 protocol" \
@@ -31,11 +32,13 @@ LABEL org.opencontainers.image.title="ShrouDB" \
       org.opencontainers.image.source="https://github.com/shroudb/shroudb" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0"
 COPY --from=builder /out/shroudb /shroudb
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 VOLUME /data
 WORKDIR /data
-USER shroudb
 EXPOSE 6399 9090
-ENTRYPOINT ["/shroudb"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["/shroudb"]
 
 # --- shroudb-cli: command-line client ---
 FROM alpine:3.21 AS shroudb-cli
