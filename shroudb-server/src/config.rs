@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde::Deserialize;
-use shroudb_acl::{Scope, StaticTokenValidator, Token, TokenGrant};
+use shroudb_acl::{Scope, ServerAuthConfig, StaticTokenValidator, Token, TokenGrant};
 use shroudb_storage::engine::CacheMemoryBudget;
 use shroudb_storage::{StorageEngineConfig, wal::writer::FsyncMode};
 use shroudb_store::Namespace;
@@ -20,7 +19,7 @@ pub struct ShrouDBConfig {
     #[serde(default)]
     pub storage: StorageConfig,
     #[serde(default)]
-    pub auth: Option<AuthConfig>,
+    pub auth: Option<ServerAuthConfig>,
     #[serde(default)]
     pub webhooks: Vec<WebhookConfig>,
 }
@@ -193,42 +192,6 @@ fn default_data_dir() -> PathBuf {
     PathBuf::from("./data")
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AuthConfig {
-    /// Auth method. Currently only "token" is supported.
-    #[serde(default)]
-    pub method: Option<String>,
-    /// Token-to-policy mappings.
-    #[serde(default)]
-    pub tokens: HashMap<String, TokenConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TokenConfig {
-    /// Tenant ID this token is scoped to.
-    pub tenant: String,
-    /// Human-readable actor name for audit trail.
-    #[serde(default = "default_actor")]
-    pub actor: String,
-    /// Whether this is a platform/superuser token.
-    #[serde(default)]
-    pub platform: bool,
-    /// Namespace-scoped grants.
-    #[serde(default)]
-    pub grants: Vec<GrantConfig>,
-}
-
-fn default_actor() -> String {
-    "anonymous".to_string()
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct GrantConfig {
-    pub namespace: String,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-}
-
 // ---------------------------------------------------------------------------
 // Conversion helpers
 // ---------------------------------------------------------------------------
@@ -324,8 +287,8 @@ pub fn build_token_validator(config: &ShrouDBConfig) -> StaticTokenValidator {
     let mut validator = StaticTokenValidator::new();
 
     if let Some(auth) = &config.auth {
-        for (raw_token, token_config) in &auth.tokens {
-            let grants: Vec<TokenGrant> = token_config
+        for (raw_token, tc) in &auth.tokens {
+            let grants: Vec<TokenGrant> = tc
                 .grants
                 .iter()
                 .map(|g| {
@@ -349,9 +312,9 @@ pub fn build_token_validator(config: &ShrouDBConfig) -> StaticTokenValidator {
                 .collect();
 
             let token = Token {
-                tenant: token_config.tenant.clone(),
-                actor: token_config.actor.clone(),
-                is_platform: token_config.platform,
+                tenant: tc.tenant.clone(),
+                actor: tc.actor.clone(),
+                is_platform: tc.platform,
                 grants,
                 expires_at: None,
             };

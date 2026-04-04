@@ -577,6 +577,7 @@ async fn run_rekey(
                     actor: record.actor.clone(),
                     wal_position: record.wal_position,
                     vlog_offset: record.vlog_offset,
+                    vlog_generation: record.vlog_generation,
                 })
                 .collect();
             keys.push((key, versions));
