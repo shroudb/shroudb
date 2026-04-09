@@ -17,6 +17,7 @@ pub async fn handle(
             shroudb_store::StoreError::NamespaceNotFound(_) => {
                 CommandError::NamespaceNotFound(ns.to_string())
             }
+            shroudb_store::StoreError::InvalidCursor(msg) => CommandError::BadArg { message: msg },
             other => CommandError::Internal(format!("{ns}: {other}")),
         })?;
 

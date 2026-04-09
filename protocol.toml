@@ -173,7 +173,9 @@ required = true
 version = "integer"
 
 [commands.LIST]
-description = "List active keys in a namespace"
+description = """List active keys in a namespace. \
+Returns an error if the CURSOR value does not correspond to a key \
+that exists in the namespace."""
 acl = "read"
 
 [[commands.LIST.params]]
@@ -401,9 +403,14 @@ required = true
 [commands."CONFIG GET".response]
 key = "string"
 value = "string?"
+source = "string?"
 
 [commands."CONFIG SET"]
-description = "Set a runtime configuration value (admin only)"
+description = """Set a runtime configuration value (admin only). \
+Only registered config keys are accepted; unknown keys return an error. \
+Values are type-checked against the key's schema (u64, bool, string). \
+Valid keys: max_segment_bytes, max_segment_entries, \
+snapshot_entry_threshold, snapshot_time_threshold_secs."""
 acl = "admin"
 
 [[commands."CONFIG SET".params]]

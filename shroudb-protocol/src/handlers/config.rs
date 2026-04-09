@@ -30,6 +30,13 @@ pub async fn handle_set(
         .map_err(|_| CommandError::Internal("system clock error".into()))?
         .as_secs();
 
+    // Validate against schema before writing to WAL — reject bad values
+    // before they hit persistent storage.
+    engine
+        .config_store()
+        .validate(key, value)
+        .map_err(|e| CommandError::BadArg { message: e })?;
+
     // Write to WAL for persistence across restarts
     engine
         .apply(
@@ -43,7 +50,7 @@ pub async fn handle_set(
         .await
         .map_err(|e| CommandError::Internal(e.to_string()))?;
 
-    // Update in-memory config store (validates against schema)
+    // Update in-memory config store
     engine
         .config_store()
         .set(

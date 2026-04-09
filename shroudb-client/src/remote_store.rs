@@ -68,6 +68,9 @@ fn client_err(e: ClientError) -> StoreError {
         ClientError::Server(msg) if msg.contains("namespace not empty") => {
             StoreError::NamespaceNotEmpty(msg)
         }
+        ClientError::Server(msg) if msg.contains("invalid cursor") => {
+            StoreError::InvalidCursor(msg)
+        }
         ClientError::Server(msg) => StoreError::Storage(msg),
         ClientError::Connection(e) => StoreError::Connection(e.to_string()),
         ClientError::Timeout => StoreError::Connection("timeout".into()),

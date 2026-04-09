@@ -1569,3 +1569,147 @@ async fn cache_survives_restart() {
     let result = c2.get("persist", b"post-restart").await.unwrap();
     assert_eq!(result.value, b"works");
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// CONFIG SET schema enforcement (LOW-01)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn config_set_rejects_unknown_key() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    let result = c.config_set("bogus_key", "42").await;
+    assert!(result.is_err(), "CONFIG SET should reject unknown key");
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("unknown config key"),
+        "error should mention unknown key, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn config_set_rejects_wrong_type() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    let result = c.config_set("max_segment_bytes", "not-a-number").await;
+    assert!(result.is_err(), "CONFIG SET should reject wrong type");
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("expected u64"),
+        "error should mention type mismatch, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn config_set_accepts_valid_key_and_type() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.config_set("max_segment_bytes", "33554432").await.unwrap();
+
+    let value = c.config_get("max_segment_bytes").await.unwrap();
+    assert_eq!(value.as_deref(), Some("33554432"));
+}
+
+#[tokio::test]
+async fn config_get_returns_seeded_values() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    // Engine config seeds default values — max_segment_bytes should be present
+    let value = c.config_get("max_segment_bytes").await.unwrap();
+    assert!(
+        value.is_some(),
+        "max_segment_bytes should be seeded from engine config"
+    );
+    // Default is 64MB = 67108864
+    assert_eq!(value.as_deref(), Some("67108864"));
+}
+
+#[tokio::test]
+async fn config_set_persists_across_restart() {
+    let mut server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.config_set("snapshot_entry_threshold", "50000")
+        .await
+        .unwrap();
+
+    let data_path = server.data_dir.path().to_path_buf();
+
+    drop(c);
+    server.stop();
+
+    let server2 = start_on_data_dir_path(&data_path, TEST_MASTER_KEY)
+        .await
+        .expect("server failed to restart");
+    let mut c2 = server2.client().await;
+
+    let value = c2.config_get("snapshot_entry_threshold").await.unwrap();
+    assert_eq!(
+        value.as_deref(),
+        Some("50000"),
+        "CONFIG SET value should persist via WAL"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// LIST cursor validation (LOW-03)
+// ═══════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn list_invalid_cursor_returns_bad_arg() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.namespace_create("cursor-test").await.unwrap();
+    c.put("cursor-test", b"k1", b"v1").await.unwrap();
+    c.put("cursor-test", b"k2", b"v2").await.unwrap();
+
+    // Use a cursor that doesn't correspond to any key
+    let result = c.list_cursor("cursor-test", "nonexistent-cursor", 10).await;
+    assert!(
+        result.is_err(),
+        "LIST with invalid cursor should return error"
+    );
+    let err = format!("{}", result.unwrap_err());
+    assert!(
+        err.contains("invalid cursor"),
+        "error should mention invalid cursor, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn list_valid_cursor_paginates_correctly() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let mut c = server.client().await;
+
+    c.namespace_create("paginate-test").await.unwrap();
+    for i in 0..5 {
+        c.put("paginate-test", format!("key:{i:02}").as_bytes(), b"v")
+            .await
+            .unwrap();
+    }
+
+    // Get first page with limit 2
+    // Get first page with limit 2 via raw_command for full control
+    let resp = c
+        .raw_command(&["LIST", "paginate-test", "LIMIT", "2"])
+        .await
+        .unwrap();
+    let cursor = resp.get_string_field("cursor");
+    assert!(cursor.is_some(), "should have a next cursor with limit 2");
+
+    // Use the returned cursor to get next page
+    let cursor_val = cursor.unwrap();
+    let page2 = c
+        .list_cursor("paginate-test", &cursor_val, 2)
+        .await
+        .unwrap();
+    assert!(
+        !page2.items.is_empty(),
+        "second page should have items after valid cursor"
+    );
+}

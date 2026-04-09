@@ -238,7 +238,7 @@ Without a master key, the server starts in dev mode with an ephemeral key -- dat
 
 | Command | Description |
 |---------|-------------|
-| `PIPELINE count [REQUEST_ID id]` | Execute the next `count` commands atomically. All succeed or all roll back. |
+| `PIPELINE [REQUEST_ID id] <cmd1> <cmd2> ...` | Atomic batch (nested command arrays). All succeed or all roll back. Idempotent with REQUEST_ID. |
 | `SUBSCRIBE ns [KEY key] [EVENTS PUT\|DELETE]` | Subscribe to change events on a namespace. Optionally filter by key or event type. |
 | `UNSUBSCRIBE` | End the current subscription. |
 
@@ -250,7 +250,7 @@ Without a master key, the server starts in dev mode with an ephemeral key -- dat
 | `PING` | Test connectivity. |
 | `HEALTH` | Check server health. |
 | `CONFIG GET key` | Read a runtime configuration value. |
-| `CONFIG SET key value` | Set a runtime configuration value (admin only). |
+| `CONFIG SET key value` | Set a runtime configuration value (admin only). Only registered keys are accepted; values are type-checked. |
 | `COMMAND LIST` | List all supported commands. |
 
 See [`protocol.toml`](protocol.toml) for the machine-readable protocol specification.
@@ -293,7 +293,7 @@ Mount a volume at `/data` for durable storage. Without a volume, data is lost wh
 |----------|----------|-------------|
 | `SHROUDB_MASTER_KEY` | Yes (production) | 64 hex characters. Encrypts all data at rest. |
 | `SHROUDB_MASTER_KEY_FILE` | Alternative | Path to a file containing the master key. |
-| `LOG_LEVEL` | No | Log level (`info`, `debug`, `warn`). Default: `info`. |
+| `SHROUDB_LOG_LEVEL` | No | Log level (`info`, `debug`, `warn`). Default: `info`. |
 
 Without a master key the server starts in dev mode with an ephemeral key -- data will not survive restarts.
 
@@ -307,7 +307,7 @@ services:
       - "6399:6399"
     environment:
       - SHROUDB_MASTER_KEY=${SHROUDB_MASTER_KEY}
-      - LOG_LEVEL=info
+      - SHROUDB_LOG_LEVEL=info
     volumes:
       - shroudb-data:/data
       - ./config.toml:/config.toml:ro
@@ -327,10 +327,11 @@ docker compose up -d
 
 ## Telemetry
 
-ShrouDB provides three telemetry channels:
+ShrouDB provides four telemetry channels:
 
-- **Console** -- Structured JSON logs to stdout. Configurable via `LOG_LEVEL`.
+- **Console** -- Structured JSON logs to stdout. Configurable via `SHROUDB_LOG_LEVEL`.
 - **Audit log** -- All data operations are written to `{data_dir}/audit.log` for compliance and forensic review.
-- **OpenTelemetry** -- OTLP export of traces and metrics to any OpenTelemetry-compatible backend. Configure with `metrics_bind` in the server config.
+- **OpenTelemetry** -- OTLP export of traces and metrics to any OpenTelemetry-compatible backend. Configure with `otel_endpoint` in the server config.
+- **Prometheus** -- Metrics exposed via HTTP endpoint. Configure with `metrics_bind` in the server config.
 
 All telemetry is handled by the shared `shroudb-telemetry` library.

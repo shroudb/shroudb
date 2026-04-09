@@ -324,11 +324,11 @@ When the scan is complete, `cursor` is null:
 
 **Errors:**
 
-| Code                 | Condition                |
-|----------------------|--------------------------|
-| `BAD_ARG`            | Missing namespace        |
-| `NAMESPACE_NOT_FOUND`| Namespace does not exist |
-| `DENIED`             | Insufficient permissions |
+| Code                 | Condition                                           |
+|----------------------|-----------------------------------------------------|
+| `BAD_ARG`            | Missing namespace, or invalid cursor (key not found in namespace) |
+| `NAMESPACE_NOT_FOUND`| Namespace does not exist                            |
+| `DENIED`             | Insufficient permissions                            |
 
 ### 4.5 VERSIONS
 
@@ -829,17 +829,19 @@ $15\r\nmax_connections\r\n
 **Success response:**
 
 ```
-%3\r\n
+%4\r\n
 +status\r\n+OK\r\n
-+key\r\n+max_connections\r\n
-+value\r\n+1024\r\n
++key\r\n+max_segment_bytes\r\n
++value\r\n+67108864\r\n
++source\r\n+toml\r\n
 ```
 
-| Field    | Type          | Description          |
-|----------|---------------|----------------------|
-| `status` | string        | `"OK"`               |
-| `key`    | string        | Configuration key    |
-| `value`  | string / null | Current value        |
+| Field    | Type          | Description                           |
+|----------|---------------|---------------------------------------|
+| `status` | string        | `"OK"`                                |
+| `key`    | string        | Configuration key                     |
+| `value`  | string / null | Current value                         |
+| `source` | string / null | Where the value came from: `toml`, `wal`, or `runtime` |
 
 **Errors:**
 
@@ -850,7 +852,16 @@ $15\r\nmax_connections\r\n
 
 ### 8.4 CONFIG SET
 
-Set a runtime configuration value.
+Set a runtime configuration value. Only registered config keys are accepted; unknown keys return an error. Values are type-checked against the key's schema.
+
+**Valid keys:**
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `max_segment_bytes` | u64 | Maximum WAL segment size in bytes |
+| `max_segment_entries` | u64 | Maximum WAL entries per segment |
+| `snapshot_entry_threshold` | u64 | WAL entries before triggering auto-snapshot |
+| `snapshot_time_threshold_secs` | u64 | Maximum seconds between auto-snapshots |
 
 **Request:**
 
@@ -862,8 +873,8 @@ CONFIG SET <key> <value>
 *4\r\n
 $6\r\nCONFIG\r\n
 $3\r\nSET\r\n
-$9\r\nlog_level\r\n
-$5\r\ndebug\r\n
+$18\r\nmax_segment_bytes\r\n
+$8\r\n33554432\r\n
 ```
 
 **Success response:**
@@ -875,10 +886,10 @@ $5\r\ndebug\r\n
 
 **Errors:**
 
-| Code       | Condition                          |
-|------------|------------------------------------|
-| `BAD_ARG`  | Missing key or value, invalid type |
-| `DENIED`   | Insufficient permissions (admin)   |
+| Code       | Condition                                            |
+|------------|------------------------------------------------------|
+| `BAD_ARG`  | Unknown key, wrong value type, or immutable key      |
+| `DENIED`   | Insufficient permissions (admin)                     |
 
 ### 8.5 COMMAND LIST
 

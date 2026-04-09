@@ -532,6 +532,8 @@ async fn run_rekey(
     let old_source = FixedKeySource(SecretBytes::new(old_bytes));
     let new_source = FixedKeySource(SecretBytes::new(new_bytes));
 
+    let rekey_start = std::time::Instant::now();
+
     // Step 1: Open with old key — loads all data into KvIndex
     eprintln!("  opening with old key...");
     let engine_config = config::to_engine_config(cfg);
@@ -691,15 +693,27 @@ async fn run_rekey(
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
 
+    let elapsed = rekey_start.elapsed();
+    let keys_per_sec = if elapsed.as_secs_f64() > 0.0 {
+        replayed_keys as f64 / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
+
     eprintln!(
-        "  re-encrypted: {} namespaces, {} keys",
+        "  re-encrypted: {} namespaces, {} keys in {:.2}s ({:.0} keys/s)",
         snapshot_data.len(),
-        replayed_keys
+        replayed_keys,
+        elapsed.as_secs_f64(),
+        keys_per_sec,
     );
     eprintln!();
     eprintln!(
         "Rekey complete. Update SHROUDB_MASTER_KEY to the new key before starting the server."
     );
+    eprintln!();
+    eprintln!("NOTE: This is an offline operation. The server was not running during rekey.");
+    eprintln!("      Online (zero-downtime) rekey is planned for a future release.");
 
     Ok(())
 }

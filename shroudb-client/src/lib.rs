@@ -345,6 +345,41 @@ impl ShrouDBClient {
         check_ok(&resp)
     }
 
+    /// Get a runtime configuration value.
+    pub async fn config_get(&mut self, key: &str) -> Result<Option<String>, ClientError> {
+        let resp = self
+            .connection
+            .send_command_strs(&["CONFIG", "GET", key])
+            .await?;
+        check_ok(&resp)?;
+        Ok(resp.get_string_field("value"))
+    }
+
+    /// Set a runtime configuration value.
+    pub async fn config_set(&mut self, key: &str, value: &str) -> Result<(), ClientError> {
+        let resp = self
+            .connection
+            .send_command_strs(&["CONFIG", "SET", key, value])
+            .await?;
+        check_ok(&resp)
+    }
+
+    /// List keys with cursor-based pagination.
+    pub async fn list_cursor(
+        &mut self,
+        ns: &str,
+        cursor: &str,
+        limit: usize,
+    ) -> Result<PageResult, ClientError> {
+        let limit_str = limit.to_string();
+        let resp = self
+            .connection
+            .send_command_strs(&["LIST", ns, "CURSOR", cursor, "LIMIT", &limit_str])
+            .await?;
+        check_ok(&resp)?;
+        parse_key_list(&resp)
+    }
+
     /// Get list of supported commands.
     pub async fn command_list(&mut self) -> Result<Vec<String>, ClientError> {
         let resp = self
