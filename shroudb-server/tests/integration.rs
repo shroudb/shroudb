@@ -1713,3 +1713,194 @@ async fn list_valid_cursor_paginates_correctly() {
         "second page should have items after valid cursor"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Master key handling
+// ═══════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn master_key_env_var_clean_64_hex() {
+    // Standard case: exactly 64 hex chars, no whitespace
+    let server = start_with_raw_env_key(TEST_MASTER_KEY)
+        .await
+        .expect("server should start with clean 64-char hex key");
+    let mut c = server.client().await;
+    c.namespace_create("mk-test").await.unwrap();
+    c.put("mk-test", b"k", b"v").await.unwrap();
+    let entry = c.get("mk-test", b"k").await.unwrap();
+    assert_eq!(entry.value, b"v");
+}
+
+#[tokio::test]
+async fn master_key_env_var_with_trailing_newline() {
+    // Docker .env files, shell heredocs, and K8s ConfigMaps often add trailing \n
+    let key_with_newline = format!("{}\n", TEST_MASTER_KEY);
+    let server = start_with_raw_env_key(&key_with_newline)
+        .await
+        .expect("server should start with trailing newline in key");
+    let mut c = server.client().await;
+    c.namespace_create("mk-nl").await.unwrap();
+    c.put("mk-nl", b"k", b"v").await.unwrap();
+    let entry = c.get("mk-nl", b"k").await.unwrap();
+    assert_eq!(entry.value, b"v");
+}
+
+#[tokio::test]
+async fn master_key_env_var_with_trailing_spaces() {
+    // Copy-paste from docs sometimes adds trailing spaces
+    let key_with_spaces = format!("{}   ", TEST_MASTER_KEY);
+    let server = start_with_raw_env_key(&key_with_spaces)
+        .await
+        .expect("server should start with trailing spaces in key");
+    let mut c = server.client().await;
+    c.namespace_create("mk-sp").await.unwrap();
+    c.put("mk-sp", b"k", b"v").await.unwrap();
+    let entry = c.get("mk-sp", b"k").await.unwrap();
+    assert_eq!(entry.value, b"v");
+}
+
+#[tokio::test]
+async fn master_key_env_var_with_leading_and_trailing_whitespace() {
+    let key_padded = format!("  {}\t\n", TEST_MASTER_KEY);
+    let server = start_with_raw_env_key(&key_padded)
+        .await
+        .expect("server should start with leading/trailing whitespace in key");
+    let mut c = server.client().await;
+    c.namespace_create("mk-pad").await.unwrap();
+    c.put("mk-pad", b"k", b"v").await.unwrap();
+    let entry = c.get("mk-pad", b"k").await.unwrap();
+    assert_eq!(entry.value, b"v");
+}
+
+#[tokio::test]
+async fn master_key_env_var_with_crlf() {
+    // Windows-style line endings from .env files edited on Windows
+    let key_crlf = format!("{}\r\n", TEST_MASTER_KEY);
+    let server = start_with_raw_env_key(&key_crlf)
+        .await
+        .expect("server should start with CRLF after key");
+    let mut c = server.client().await;
+    c.namespace_create("mk-crlf").await.unwrap();
+    c.put("mk-crlf", b"k", b"v").await.unwrap();
+    let entry = c.get("mk-crlf", b"k").await.unwrap();
+    assert_eq!(entry.value, b"v");
+}
+
+#[tokio::test]
+async fn master_key_file_hex_with_trailing_newline() {
+    // Key files written with `echo $KEY > keyfile` have a trailing newline
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("master.key");
+    std::fs::write(&key_path, format!("{}\n", TEST_MASTER_KEY)).unwrap();
+
+    let server = start_with_key_file(&key_path)
+        .await
+        .expect("server should start with hex key file containing trailing newline");
+    let mut c = server.client().await;
+    c.namespace_create("mk-file-nl").await.unwrap();
+    c.put("mk-file-nl", b"k", b"v").await.unwrap();
+    let entry = c.get("mk-file-nl", b"k").await.unwrap();
+    assert_eq!(entry.value, b"v");
+}
+
+#[tokio::test]
+async fn master_key_file_raw_32_bytes() {
+    // Raw binary key file (32 bytes, not hex-encoded)
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("master.raw");
+    std::fs::write(&key_path, [0u8; 32]).unwrap();
+
+    let server = start_with_key_file(&key_path)
+        .await
+        .expect("server should start with raw 32-byte key file");
+    let mut c = server.client().await;
+    c.namespace_create("mk-file-raw").await.unwrap();
+    c.put("mk-file-raw", b"k", b"v").await.unwrap();
+    let entry = c.get("mk-file-raw", b"k").await.unwrap();
+    assert_eq!(entry.value, b"v");
+}
+
+#[tokio::test]
+async fn master_key_file_clean_hex() {
+    // Clean hex file without trailing newline
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("master.hex");
+    std::fs::write(&key_path, TEST_MASTER_KEY).unwrap();
+
+    let server = start_with_key_file(&key_path)
+        .await
+        .expect("server should start with clean hex key file");
+    let mut c = server.client().await;
+    c.namespace_create("mk-file-hex").await.unwrap();
+    c.put("mk-file-hex", b"k", b"v").await.unwrap();
+    let entry = c.get("mk-file-hex", b"k").await.unwrap();
+    assert_eq!(entry.value, b"v");
+}
+
+#[tokio::test]
+async fn master_key_require_persistent_blocks_ephemeral() {
+    // With SHROUDB_REQUIRE_PERSISTENT_KEY=true and no key, server must NOT start
+    let result = start_with_require_persistent_no_key().await;
+    assert!(
+        result.is_none(),
+        "server should refuse to start without persistent key when required"
+    );
+}
+
+#[tokio::test]
+async fn master_key_data_survives_restart_with_same_key() {
+    // Write data, stop server, restart with same key, read data back
+    let key = TEST_MASTER_KEY;
+    let mut server = TestServer::start().await.expect("first start failed");
+    let mut c = server.client().await;
+    c.namespace_create("persist").await.unwrap();
+    c.put("persist", b"k", b"durable").await.unwrap();
+    drop(c);
+    server.stop();
+
+    // Restart on same data dir with same key (start_on_data_dir_path borrows the path)
+    let data_path = server.data_dir.path().to_path_buf();
+    let server2 = start_on_data_dir_path(&data_path, key)
+        .await
+        .expect("restart failed");
+    let mut c2 = server2.client().await;
+    let entry = c2.get("persist", b"k").await.unwrap();
+    assert_eq!(entry.value, b"durable");
+}
+
+#[tokio::test]
+async fn master_key_wrong_key_cannot_read_data() {
+    // Write data with one key, restart with different key — must not return plaintext
+    let key1 = "aa".repeat(32);
+    let key2 = "bb".repeat(32);
+
+    let mut server = start_with_raw_env_key(&key1)
+        .await
+        .expect("first start failed");
+    let mut c = server.client().await;
+    c.namespace_create("wrongkey").await.unwrap();
+    c.put("wrongkey", b"secret", b"classified").await.unwrap();
+    drop(c);
+    server.stop();
+
+    let data_path = server.data_dir.path().to_path_buf();
+
+    // Restart with different key — server may start but reads should fail
+    // (wrong key = decryption failure or corrupted data)
+    if let Some(server2) = start_on_data_dir_path(&data_path, &key2).await {
+        let mut c2 = server2.client().await;
+        let result = c2.get("wrongkey", b"secret").await;
+        // Either the namespace doesn't exist (different key derived different encryption)
+        // or decryption fails — either way, we must not get "classified" back
+        match result {
+            Err(_) => {} // expected
+            Ok(entry) => {
+                assert_ne!(
+                    entry.value, b"classified",
+                    "wrong key must not decrypt data"
+                );
+            }
+        }
+    }
+    // If server2 didn't start at all (WAL recovery failed with wrong key), that's also correct
+}

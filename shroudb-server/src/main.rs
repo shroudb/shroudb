@@ -30,7 +30,10 @@ use anyhow::Context;
 use clap::Parser;
 use shroudb_crypto::SecretBytes;
 use shroudb_protocol::CommandDispatcher;
-use shroudb_storage::{EmbeddedStore, MasterKeySource, StorageEngine, StorageError};
+use shroudb_storage::{
+    ChainedMasterKeySource, EmbeddedStore, EnvMasterKey, EphemeralKey, FileMasterKey,
+    MasterKeySource, StorageEngine, StorageError,
+};
 use tokio::sync::watch;
 
 // ---------------------------------------------------------------------------
@@ -98,84 +101,8 @@ enum SubCommand {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Master key sources
-// ---------------------------------------------------------------------------
-
-struct EnvMasterKey;
-
-impl MasterKeySource for EnvMasterKey {
-    fn load(
-        &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<SecretBytes, StorageError>> + Send + '_>>
-    {
-        Box::pin(async {
-            if let Ok(hex_key) = std::env::var("SHROUDB_MASTER_KEY") {
-                let bytes = hex::decode(&hex_key)
-                    .map_err(|e| StorageError::MasterKeyInvalid(format!("invalid hex: {e}")))?;
-                if bytes.len() != 32 {
-                    return Err(StorageError::MasterKeyInvalid(format!(
-                        "expected 32 bytes, got {}",
-                        bytes.len()
-                    )));
-                }
-                return Ok(SecretBytes::new(bytes));
-            }
-
-            if let Ok(path) = std::env::var("SHROUDB_MASTER_KEY_FILE") {
-                let bytes = tokio::fs::read(&path).await.map_err(|e| {
-                    StorageError::MasterKeyInvalid(format!("failed to read {path}: {e}"))
-                })?;
-                let key_bytes = if bytes.len() == 64 {
-                    hex::decode(&bytes).map_err(|e| {
-                        StorageError::MasterKeyInvalid(format!(
-                            "file appears hex-encoded (64 bytes) but decode failed: {e}"
-                        ))
-                    })?
-                } else {
-                    bytes
-                };
-                if key_bytes.len() != 32 {
-                    return Err(StorageError::MasterKeyInvalid(format!(
-                        "expected 32 bytes, got {}",
-                        key_bytes.len()
-                    )));
-                }
-                return Ok(SecretBytes::new(key_bytes));
-            }
-
-            Err(StorageError::MasterKeyNotFound {
-                sources: "SHROUDB_MASTER_KEY, SHROUDB_MASTER_KEY_FILE".into(),
-            })
-        })
-    }
-
-    fn source_name(&self) -> &str {
-        "environment"
-    }
-}
-
-/// Ephemeral in-memory key for development. Data does not survive restart.
-struct EphemeralMasterKey;
-
-impl MasterKeySource for EphemeralMasterKey {
-    fn load(
-        &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<SecretBytes, StorageError>> + Send + '_>>
-    {
-        Box::pin(async {
-            tracing::warn!("using ephemeral master key — data will not survive restart");
-            let mut key = vec![0u8; 32];
-            ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut key)
-                .map_err(|_| StorageError::MasterKeyInvalid("RNG failure".into()))?;
-            Ok(SecretBytes::new(key))
-        })
-    }
-
-    fn source_name(&self) -> &str {
-        "ephemeral"
-    }
-}
+// Master key sources: use shared implementations from shroudb-storage.
+// EnvMasterKey, FileMasterKey, EphemeralKey, ChainedMasterKeySource.
 
 // ---------------------------------------------------------------------------
 // Main
@@ -237,15 +164,19 @@ async fn main() -> anyhow::Result<()> {
 
     // (CLI overrides already applied above, before telemetry init)
 
-    // Master key
-    let key_source: Box<dyn MasterKeySource> = if std::env::var("SHROUDB_MASTER_KEY").is_ok()
-        || std::env::var("SHROUDB_MASTER_KEY_FILE").is_ok()
-    {
-        Box::new(EnvMasterKey)
+    // Master key — shared chain: env → file → ephemeral
+    let require_persistent =
+        std::env::var("SHROUDB_REQUIRE_PERSISTENT_KEY").is_ok_and(|v| v == "true" || v == "1");
+    let mut key_sources: Vec<Box<dyn MasterKeySource>> = vec![
+        Box::new(EnvMasterKey::new()),
+        Box::new(FileMasterKey::new()),
+    ];
+    if require_persistent {
+        tracing::info!("persistent master key required (SHROUDB_REQUIRE_PERSISTENT_KEY=true)");
     } else {
-        tracing::warn!("no master key configured — using ephemeral key (dev mode)");
-        Box::new(EphemeralMasterKey)
-    };
+        key_sources.push(Box::new(EphemeralKey));
+    }
+    let key_source: Box<dyn MasterKeySource> = Box::new(ChainedMasterKeySource::new(key_sources));
 
     // Handle subcommands (offline operations)
     if let Some(subcmd) = cli.command {

@@ -395,6 +395,133 @@ pub async fn start_on_data_dir_path_with_cache(
     Some(server)
 }
 
+/// Start a server with a raw SHROUDB_MASTER_KEY env value (for whitespace/trim testing).
+/// Unlike `TestServerConfig::master_key`, this passes the value as-is without any processing.
+pub async fn start_with_raw_env_key(raw_env_value: &str) -> Option<TestServer> {
+    let binary = find_binary()?;
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let data_dir = tempfile::tempdir().ok()?;
+    let config_dir = tempfile::tempdir().ok()?;
+
+    let config_path = config_dir.path().join("config.toml");
+    let toml = generate_config(&addr, &TestServerConfig::default());
+    std::fs::write(&config_path, toml).ok()?;
+
+    let child = Command::new(&binary)
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--data-dir")
+        .arg(data_dir.path())
+        .arg("--log-level")
+        .arg("warn")
+        .env("SHROUDB_MASTER_KEY", raw_env_value)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let mut server = TestServer {
+        child,
+        addr: addr.clone(),
+        data_dir,
+        config_dir,
+        master_key: raw_env_value.to_string(),
+    };
+
+    if !server.wait_ready(Duration::from_secs(10)).await {
+        return None;
+    }
+
+    Some(server)
+}
+
+/// Start a server using SHROUDB_MASTER_KEY_FILE instead of SHROUDB_MASTER_KEY.
+pub async fn start_with_key_file(key_file_path: &Path) -> Option<TestServer> {
+    let binary = find_binary()?;
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let data_dir = tempfile::tempdir().ok()?;
+    let config_dir = tempfile::tempdir().ok()?;
+
+    let config_path = config_dir.path().join("config.toml");
+    let toml = generate_config(&addr, &TestServerConfig::default());
+    std::fs::write(&config_path, toml).ok()?;
+
+    let child = Command::new(&binary)
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--data-dir")
+        .arg(data_dir.path())
+        .arg("--log-level")
+        .arg("warn")
+        .env("SHROUDB_MASTER_KEY_FILE", key_file_path)
+        .env_remove("SHROUDB_MASTER_KEY")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let mut server = TestServer {
+        child,
+        addr: addr.clone(),
+        data_dir,
+        config_dir,
+        master_key: "file-based".to_string(),
+    };
+
+    if !server.wait_ready(Duration::from_secs(10)).await {
+        return None;
+    }
+
+    Some(server)
+}
+
+/// Start a server with SHROUDB_REQUIRE_PERSISTENT_KEY=true and no key configured.
+/// Expected to fail to start.
+pub async fn start_with_require_persistent_no_key() -> Option<TestServer> {
+    let binary = find_binary()?;
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let data_dir = tempfile::tempdir().ok()?;
+    let config_dir = tempfile::tempdir().ok()?;
+
+    let config_path = config_dir.path().join("config.toml");
+    let toml = generate_config(&addr, &TestServerConfig::default());
+    std::fs::write(&config_path, toml).ok()?;
+
+    let child = Command::new(&binary)
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--data-dir")
+        .arg(data_dir.path())
+        .arg("--log-level")
+        .arg("warn")
+        .env("SHROUDB_REQUIRE_PERSISTENT_KEY", "true")
+        .env_remove("SHROUDB_MASTER_KEY")
+        .env_remove("SHROUDB_MASTER_KEY_FILE")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let mut server = TestServer {
+        child,
+        addr: addr.clone(),
+        data_dir,
+        config_dir,
+        master_key: String::new(),
+    };
+
+    // Should NOT become ready — give it a short window
+    if server.wait_ready(Duration::from_secs(3)).await {
+        // It started when it shouldn't have
+        return Some(server);
+    }
+
+    None
+}
+
 fn generate_config(bind: &str, config: &TestServerConfig) -> String {
     let mut toml = format!(
         r#"[server]
