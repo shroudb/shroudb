@@ -59,11 +59,7 @@ pub struct ServerConfig {
     #[serde(default = "default_bind")]
     pub bind: SocketAddr,
     #[serde(default)]
-    pub tls_cert: Option<PathBuf>,
-    #[serde(default)]
-    pub tls_key: Option<PathBuf>,
-    #[serde(default)]
-    pub tls_client_ca: Option<PathBuf>,
+    pub tls: Option<shroudb_server_tcp::TlsConfig>,
     #[serde(default)]
     pub unix_socket: Option<PathBuf>,
     #[serde(default)]
@@ -79,9 +75,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             bind: default_bind(),
-            tls_cert: None,
-            tls_key: None,
-            tls_client_ca: None,
+            tls: None,
             unix_socket: None,
             rate_limit_per_second: None,
             metrics_bind: None,

@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 shroudb-acl.workspace = true
 shroudb-protocol.workspace = true
+shroudb-server-tcp.workspace = true
 shroudb-store.workspace = true
 
 # These will be replaced with shroudb-storage from registry once published for v1
@@ -29,8 +30,6 @@ postcard.workspace = true
 toml.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
-rustls.workspace = true
-rustls-pki-types.workspace = true
 tokio-rustls.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true

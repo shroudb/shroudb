@@ -231,8 +231,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         "disabled".to_string()
     };
-    let tls_status = if cfg.server.tls_cert.is_some() {
-        if cfg.server.tls_client_ca.is_some() {
+    let tls_status = if let Some(ref tls) = cfg.server.tls {
+        if tls.client_ca.is_some() {
             "on (mTLS)"
         } else {
             "on"

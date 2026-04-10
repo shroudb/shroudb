@@ -529,15 +529,16 @@ bind = "{bind}"
 "#
     );
 
-    if let Some(ref cert_path) = config.tls_cert {
-        toml.push_str(&format!("tls_cert = \"{}\"\n", cert_path.display()));
-    }
-    if let Some(ref key_path) = config.tls_key {
-        toml.push_str(&format!("tls_key = \"{}\"\n", key_path.display()));
-    }
-
     if let Some(limit) = config.rate_limit {
         toml.push_str(&format!("rate_limit_per_second = {limit}\n"));
+    }
+
+    if let (Some(cert_path), Some(key_path)) = (&config.tls_cert, &config.tls_key) {
+        toml.push_str(&format!(
+            "\n[server.tls]\ncert = \"{}\"\nkey = \"{}\"\n",
+            cert_path.display(),
+            key_path.display()
+        ));
     }
 
     toml.push_str("\n[storage]\n");

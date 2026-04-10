@@ -8,7 +8,6 @@ use shroudb_store::Store;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
-use tokio_rustls::TlsAcceptor;
 
 use crate::config::ServerConfig;
 use crate::connection::handle_connection;
@@ -27,7 +26,12 @@ pub async fn run<S: Store + 'static, V: TokenValidator + 'static>(
         .with_context(|| format!("binding TCP on {}", config.bind))?;
     tracing::info!(addr = %config.bind, "listening");
 
-    let tls_acceptor = build_tls_acceptor(config)?;
+    let tls_acceptor = config
+        .tls
+        .as_ref()
+        .map(shroudb_server_tcp::build_tls_acceptor)
+        .transpose()
+        .context("failed to build TLS acceptor")?;
     if tls_acceptor.is_some() {
         tracing::info!("TLS enabled");
     }
@@ -139,61 +143,4 @@ pub async fn run<S: Store + 'static, V: TokenValidator + 'static>(
 
     tracing::info!("server stopped");
     Ok(())
-}
-
-fn build_tls_acceptor(config: &ServerConfig) -> anyhow::Result<Option<TlsAcceptor>> {
-    let (cert_path, key_path) = match (&config.tls_cert, &config.tls_key) {
-        (Some(c), Some(k)) => (c, k),
-        (None, None) => return Ok(None),
-        _ => anyhow::bail!("both tls_cert and tls_key must be set (or neither)"),
-    };
-
-    let cert_pem = std::fs::read(cert_path)
-        .with_context(|| format!("reading TLS cert: {}", cert_path.display()))?;
-    let key_pem = std::fs::read(key_path)
-        .with_context(|| format!("reading TLS key: {}", key_path.display()))?;
-
-    use rustls_pki_types::pem::PemObject;
-    let certs: Vec<rustls_pki_types::CertificateDer<'static>> =
-        rustls_pki_types::CertificateDer::pem_slice_iter(&cert_pem)
-            .collect::<Result<Vec<_>, _>>()
-            .context("parsing TLS certificates")?;
-    let key = rustls_pki_types::PrivateKeyDer::from_pem_slice(&key_pem)
-        .context("parsing TLS private key")?;
-
-    let provider = rustls::crypto::ring::default_provider();
-
-    let tls_config = if let Some(ref ca_path) = config.tls_client_ca {
-        let ca_pem = std::fs::read(ca_path)
-            .with_context(|| format!("reading client CA cert: {}", ca_path.display()))?;
-        let ca_certs: Vec<rustls_pki_types::CertificateDer<'static>> =
-            rustls_pki_types::CertificateDer::pem_slice_iter(&ca_pem)
-                .collect::<Result<Vec<_>, _>>()
-                .context("parsing client CA certificates")?;
-        let mut root_store = rustls::RootCertStore::empty();
-        for cert in ca_certs {
-            root_store
-                .add(cert)
-                .context("adding client CA certificate to root store")?;
-        }
-        let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
-            .build()
-            .context("building mTLS client verifier")?;
-        tracing::info!("mTLS enabled (client certificate required)");
-        rustls::ServerConfig::builder_with_provider(Arc::new(provider))
-            .with_safe_default_protocol_versions()
-            .context("setting TLS protocol versions")?
-            .with_client_cert_verifier(verifier)
-            .with_single_cert(certs, key)
-            .context("building TLS server config with mTLS")?
-    } else {
-        rustls::ServerConfig::builder_with_provider(Arc::new(provider))
-            .with_safe_default_protocol_versions()
-            .context("setting TLS protocol versions")?
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .context("building TLS server config")?
-    };
-
-    Ok(Some(TlsAcceptor::from(Arc::new(tls_config))))
 }
