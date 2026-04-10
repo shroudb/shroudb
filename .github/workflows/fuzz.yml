@@ -11,6 +11,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_SHROUDB_CRATESIO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+  CARGO_REGISTRIES_SHROUDB_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
 jobs:
   fuzz:
@@ -44,9 +46,6 @@ jobs:
           index = "sparse+https://crates.shroudb.dev/api/v1/crates/"
           credential-provider = ["cargo:token"]
           EOF
-        env:
-          CARGO_REGISTRIES_SHROUDB_CRATESIO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          CARGO_REGISTRIES_SHROUDB_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
       - name: Install nightly toolchain
         run: rustup toolchain install nightly --profile minimal
@@ -81,9 +80,6 @@ jobs:
           cargo +nightly fuzz run ${{ matrix.target }} -- \
             -max_total_time=${{ env.FUZZ_SECONDS }} \
             -max_len=4096
-        env:
-          CARGO_REGISTRIES_SHROUDB_CRATESIO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          CARGO_REGISTRIES_SHROUDB_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
       - name: Upload crash artifacts
         if: failure()
