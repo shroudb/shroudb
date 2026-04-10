@@ -106,6 +106,9 @@ fn read_frame_depth<'a>(
                 let count: usize = line
                     .parse()
                     .map_err(|e| ProtocolError::InvalidFormat(format!("bad map length: {e}")))?;
+                if count > MAX_COLLECTION_SIZE {
+                    return Err(ProtocolError::FrameTooLarge(count));
+                }
                 let mut pairs = Vec::with_capacity(count);
                 for _ in 0..count {
                     let key = match read_frame_depth(reader, depth + 1).await? {
@@ -243,5 +246,27 @@ mod tests {
     async fn read_eof_returns_none() {
         let result = parse(b"").await;
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_map_too_large() {
+        // %33333333332\r\n — exceeds MAX_COLLECTION_SIZE
+        let input = b"%33333333332\r\n$3\r\nkey\r\n$5\r\nvalue\r\n";
+        let mut reader = BufReader::new(Cursor::new(input.to_vec()));
+        let result = read_frame(&mut reader).await;
+        assert!(matches!(result, Err(ProtocolError::FrameTooLarge(_))));
+    }
+
+    #[tokio::test]
+    async fn read_map() {
+        let input = b"%1\r\n$3\r\nkey\r\n$5\r\nvalue\r\n";
+        let frame = parse(input).await.unwrap();
+        assert_eq!(
+            frame,
+            Resp3Frame::Map(vec![(
+                Resp3Frame::BulkString(b"key".to_vec()),
+                Resp3Frame::BulkString(b"value".to_vec()),
+            )])
+        );
     }
 }
