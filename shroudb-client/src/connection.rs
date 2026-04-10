@@ -14,9 +14,12 @@ use crate::response::Response;
 /// A connection to a ShrouDB server that speaks RESP3.
 ///
 /// Supports both plain TCP and TLS transports via boxed trait objects.
+/// When `command_prefix` is set (Moat mode), [`send_command`] and
+/// [`send_command_strs`] prepend the prefix to the argument list.
 pub struct Connection {
     reader: BufReader<Box<dyn tokio::io::AsyncRead + Unpin + Send>>,
     writer: BufWriter<Box<dyn tokio::io::AsyncWrite + Unpin + Send>>,
+    command_prefix: Option<String>,
 }
 
 impl Connection {
@@ -27,6 +30,22 @@ impl Connection {
         Ok(Self {
             reader: BufReader::new(Box::new(r)),
             writer: BufWriter::new(Box::new(w)),
+            command_prefix: None,
+        })
+    }
+
+    /// Connect to a ShrouDB engine through a Moat gateway.
+    ///
+    /// All commands sent via [`send_command`] and [`send_command_strs`] are
+    /// prefixed with the given engine name (e.g. `"SHROUDB"`).
+    /// Meta-commands (AUTH, HEALTH, PING) should use [`send_meta_command_strs`].
+    pub async fn connect_moat(addr: &str, prefix: &str) -> Result<Self, ClientError> {
+        let stream = TcpStream::connect(addr).await?;
+        let (r, w) = tokio::io::split(stream);
+        Ok(Self {
+            reader: BufReader::new(Box::new(r)),
+            writer: BufWriter::new(Box::new(w)),
+            command_prefix: Some(prefix.to_ascii_uppercase()),
         })
     }
 
@@ -71,13 +90,43 @@ impl Connection {
         Ok(Self {
             reader: BufReader::new(Box::new(r)),
             writer: BufWriter::new(Box::new(w)),
+            command_prefix: None,
         })
     }
 
     /// Send a command (as a list of string arguments) and read the response.
     ///
+    /// If a command prefix is set (Moat mode), the prefix is automatically
+    /// prepended to the argument list.
+    ///
     /// Times out after 30 seconds to prevent hanging on unresponsive servers.
     pub async fn send_command(&mut self, args: &[String]) -> Result<Response, ClientError> {
+        if let Some(prefix) = &self.command_prefix {
+            let mut prefixed = Vec::with_capacity(args.len() + 1);
+            prefixed.push(prefix.clone());
+            prefixed.extend_from_slice(args);
+            self.send_raw(&prefixed).await
+        } else {
+            self.send_raw(args).await
+        }
+    }
+
+    /// Send a command from `&str` slices.
+    pub async fn send_command_strs(&mut self, args: &[&str]) -> Result<Response, ClientError> {
+        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        self.send_command(&owned).await
+    }
+
+    /// Send a meta-command (AUTH, HEALTH, PING) without any engine prefix.
+    ///
+    /// Moat handles these at the connection level regardless of mode.
+    pub async fn send_meta_command_strs(&mut self, args: &[&str]) -> Result<Response, ClientError> {
+        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        self.send_raw(&owned).await
+    }
+
+    /// Send a command without prefix logic.
+    async fn send_raw(&mut self, args: &[String]) -> Result<Response, ClientError> {
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
             self.write_command(args).await?;
             self.writer.flush().await?;
@@ -85,12 +134,6 @@ impl Connection {
         })
         .await
         .map_err(|_| ClientError::Timeout)?
-    }
-
-    /// Send a command from `&str` slices.
-    pub async fn send_command_strs(&mut self, args: &[&str]) -> Result<Response, ClientError> {
-        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        self.send_command(&owned).await
     }
 
     /// Write raw bytes to the connection (for building custom frames like PIPELINE).

@@ -124,7 +124,7 @@ pub struct ShrouDBClient {
 }
 
 impl ShrouDBClient {
-    /// Connect to a ShrouDB server at the given address (e.g. `"127.0.0.1:6399"`).
+    /// Connect directly to a standalone ShrouDB server at the given address.
     pub async fn connect(addr: &str) -> Result<Self, ClientError> {
         let connection = Connection::connect(addr).await?;
         Ok(Self { connection })
@@ -133,6 +133,15 @@ impl ShrouDBClient {
     /// Connect over TLS using the system's native root certificate store.
     pub async fn connect_tls(addr: &str) -> Result<Self, ClientError> {
         let connection = Connection::connect_tls(addr).await?;
+        Ok(Self { connection })
+    }
+
+    /// Connect to the ShrouDB engine through a Moat gateway.
+    ///
+    /// Commands are automatically prefixed with `SHROUDB` for Moat routing.
+    /// Meta-commands (AUTH, HEALTH, PING) are sent without prefix.
+    pub async fn connect_moat(addr: &str) -> Result<Self, ClientError> {
+        let connection = Connection::connect_moat(addr, "SHROUDB").await?;
         Ok(Self { connection })
     }
 
@@ -158,13 +167,16 @@ impl ShrouDBClient {
 
     /// Authenticate with a token.
     pub async fn auth(&mut self, token: &str) -> Result<(), ClientError> {
-        let resp = self.connection.send_command_strs(&["AUTH", token]).await?;
+        let resp = self
+            .connection
+            .send_meta_command_strs(&["AUTH", token])
+            .await?;
         check_ok(&resp)
     }
 
     /// Ping the server.
     pub async fn ping(&mut self) -> Result<(), ClientError> {
-        let resp = self.connection.send_command_strs(&["PING"]).await?;
+        let resp = self.connection.send_meta_command_strs(&["PING"]).await?;
         check_ok(&resp)
     }
 
@@ -341,7 +353,7 @@ impl ShrouDBClient {
 
     /// Health check.
     pub async fn health(&mut self) -> Result<(), ClientError> {
-        let resp = self.connection.send_command_strs(&["HEALTH"]).await?;
+        let resp = self.connection.send_meta_command_strs(&["HEALTH"]).await?;
         check_ok(&resp)
     }
 
