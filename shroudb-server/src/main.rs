@@ -34,6 +34,7 @@ use shroudb_storage::{
     ChainedMasterKeySource, EmbeddedStore, EnvMasterKey, EphemeralKey, FileMasterKey,
     MasterKeySource, StorageEngine, StorageError,
 };
+use shroudb_store::Store;
 use tokio::sync::watch;
 
 // ---------------------------------------------------------------------------
@@ -192,19 +193,41 @@ async fn main() -> anyhow::Result<()> {
         };
     }
 
-    // Storage engine (runs WAL recovery)
-    let engine_config = config::to_engine_config(&cfg);
-    let engine = StorageEngine::open(engine_config, key_source.as_ref())
-        .await
-        .context("failed to open storage engine")?;
-    let engine = Arc::new(engine);
+    // Store: embedded or remote
+    match cfg.storage.mode.as_str() {
+        "embedded" => {
+            let engine_config = config::to_engine_config(&cfg);
+            let engine = StorageEngine::open(engine_config, key_source.as_ref())
+                .await
+                .context("failed to open storage engine")?;
+            let engine = Arc::new(engine);
+            let store = EmbeddedStore::new(Arc::clone(&engine), "server");
+            let dispatcher = Arc::new(CommandDispatcher::new(store, Arc::clone(&engine)));
+            run_server(cfg, &cli, dispatcher, Some(engine)).await
+        }
+        "remote" => {
+            let uri = cfg
+                .storage
+                .uri
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("remote mode requires storage.uri"))?;
+            tracing::info!(uri, "connecting to remote store");
+            let store = shroudb_client::RemoteStore::connect(uri)
+                .await
+                .context("failed to connect to remote store")?;
+            let dispatcher = Arc::new(CommandDispatcher::new_remote(store));
+            run_server(cfg, &cli, dispatcher, None).await
+        }
+        other => anyhow::bail!("unknown store mode: {other}"),
+    }
+}
 
-    // Embedded Store
-    let store = EmbeddedStore::new(Arc::clone(&engine), "server");
-
-    // Command dispatcher
-    let dispatcher = Arc::new(CommandDispatcher::new(store, Arc::clone(&engine)));
-
+async fn run_server<S: Store + 'static>(
+    cfg: config::ShrouDBConfig,
+    cli: &Cli,
+    dispatcher: Arc<CommandDispatcher<S>>,
+    engine: Option<Arc<StorageEngine>>,
+) -> anyhow::Result<()> {
     // Token validator + auth (reloadable)
     let token_validator = Arc::new(reload::ReloadableValidator::new(
         config::build_token_validator(&cfg),
@@ -226,6 +249,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Startup banner
     let version = env!("CARGO_PKG_VERSION");
+    let mode_str = &cfg.storage.mode;
     let auth_status = if auth_required {
         format!("token ({} tokens)", token_validator.len())
     } else {
@@ -244,17 +268,24 @@ async fn main() -> anyhow::Result<()> {
         || std::env::var("SHROUDB_MASTER_KEY_FILE").is_ok()
     {
         "configured"
-    } else {
+    } else if engine.is_some() {
         "ephemeral (dev mode)"
+    } else {
+        "n/a (remote)"
     };
 
     eprintln!();
     eprintln!("ShrouDB v{version}");
+    eprintln!("\u{251c}\u{2500} mode:     {mode_str}");
     eprintln!("\u{251c}\u{2500} bind:     {}", cfg.server.bind);
-    eprintln!(
-        "\u{251c}\u{2500} data:     {}",
-        cfg.storage.data_dir.display()
-    );
+    if engine.is_some() {
+        eprintln!(
+            "\u{251c}\u{2500} data:     {}",
+            cfg.storage.data_dir.display()
+        );
+    } else if let Some(ref uri) = cfg.storage.uri {
+        eprintln!("\u{251c}\u{2500} remote:   {uri}");
+    }
     eprintln!("\u{251c}\u{2500} auth:     {auth_status}");
     eprintln!("\u{251c}\u{2500} tls:      {tls_status}");
     eprintln!("\u{2514}\u{2500} key:      {key_status}");
@@ -267,17 +298,26 @@ async fn main() -> anyhow::Result<()> {
     // Shutdown signal
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // Background tasks
-    let scheduler_handles = scheduler::spawn_all(
-        Arc::clone(&engine),
-        Arc::clone(&dispatcher),
-        shutdown_rx.clone(),
-    );
+    // Background tasks (embedded mode only — remote mode has no local engine)
+    let scheduler_handles = if let Some(ref eng) = engine {
+        scheduler::spawn_all(
+            Arc::clone(eng),
+            Arc::clone(&dispatcher),
+            shutdown_rx.clone(),
+        )
+    } else {
+        Vec::new()
+    };
 
-    // Webhook actors
+    // Webhook actors (embedded mode only)
     let webhook_handles = if !cfg.webhooks.is_empty() {
-        tracing::info!(count = cfg.webhooks.len(), "starting webhook actors");
-        webhooks::spawn_all(cfg.webhooks.clone(), &engine, &shutdown_rx)
+        if let Some(ref eng) = engine {
+            tracing::info!(count = cfg.webhooks.len(), "starting webhook actors");
+            webhooks::spawn_all(cfg.webhooks.clone(), eng, &shutdown_rx)
+        } else {
+            tracing::warn!("webhooks configured but unavailable in remote store mode");
+            Vec::new()
+        }
     } else {
         Vec::new()
     };
@@ -324,7 +364,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(handle) = reload_handle {
         handle.abort();
     }
-    engine.shutdown().await.map_err(|e| anyhow::anyhow!(e))?;
+    if let Some(eng) = engine {
+        eng.shutdown().await.map_err(|e| anyhow::anyhow!(e))?;
+    }
 
     tracing::info!("shroudb shut down cleanly");
     Ok(())

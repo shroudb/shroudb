@@ -17,15 +17,26 @@ use crate::response::{CommandResponse, ResponseMap, ResponseValue};
 /// Routes parsed commands to handlers, enforcing ACL at the dispatcher level.
 pub struct CommandDispatcher<S: Store> {
     store: S,
-    engine: Arc<StorageEngine>,
+    engine: Option<Arc<StorageEngine>>,
     idempotency: IdempotencyMap,
 }
 
 impl<S: Store> CommandDispatcher<S> {
+    /// Create a dispatcher with an embedded storage engine (normal mode).
     pub fn new(store: S, engine: Arc<StorageEngine>) -> Self {
         Self {
             store,
-            engine,
+            engine: Some(engine),
+            idempotency: IdempotencyMap::new(),
+        }
+    }
+
+    /// Create a dispatcher backed by a remote store (no local engine).
+    /// CONFIG GET/SET operations are unavailable in this mode.
+    pub fn new_remote(store: S) -> Self {
+        Self {
+            store,
+            engine: None,
             idempotency: IdempotencyMap::new(),
         }
     }
@@ -237,13 +248,19 @@ impl<S: Store> CommandDispatcher<S> {
             // ── Operational ──────────────────────────────────────────
             Command::Health => handlers::health::handle().await,
 
-            Command::ConfigGet { key } => {
-                handlers::config::handle_get(self.engine.config_store(), &key).await
-            }
+            Command::ConfigGet { key } => match self.engine {
+                Some(ref engine) => handlers::config::handle_get(engine.config_store(), &key).await,
+                None => Err(CommandError::Internal(
+                    "CONFIG not available in remote store mode".into(),
+                )),
+            },
 
-            Command::ConfigSet { key, value } => {
-                handlers::config::handle_set(&self.engine, &key, &value).await
-            }
+            Command::ConfigSet { key, value } => match self.engine {
+                Some(ref engine) => handlers::config::handle_set(engine, &key, &value).await,
+                None => Err(CommandError::Internal(
+                    "CONFIG not available in remote store mode".into(),
+                )),
+            },
 
             Command::CommandList => handlers::command_list::handle().await,
 

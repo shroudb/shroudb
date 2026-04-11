@@ -90,6 +90,13 @@ fn default_bind() -> SocketAddr {
 
 #[derive(Debug, Deserialize)]
 pub struct StorageConfig {
+    /// Store mode: "embedded" (default) or "remote".
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    /// Remote ShrouDB URI (required when mode = "remote").
+    /// Format: `shroudb://[token@]host[:port]` or `shroudb+tls://...`
+    #[serde(default)]
+    pub uri: Option<String>,
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
     #[serde(default)]
@@ -113,6 +120,8 @@ pub struct StorageConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
+            mode: default_mode(),
+            uri: None,
             data_dir: default_data_dir(),
             namespace: None,
             fsync_mode: None,
@@ -124,6 +133,10 @@ impl Default for StorageConfig {
             cache: None,
         }
     }
+}
+
+fn default_mode() -> String {
+    "embedded".to_string()
 }
 
 /// Configuration for the bounded KV index cache.
@@ -326,4 +339,46 @@ pub fn auth_required(config: &ShrouDBConfig) -> bool {
         .auth
         .as_ref()
         .is_some_and(|auth| auth.method.as_deref() == Some("token") && !auth.tokens.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_defaults_to_embedded_mode() {
+        let cfg = ShrouDBConfig::default();
+        assert_eq!(cfg.storage.mode, "embedded");
+        assert!(cfg.storage.uri.is_none());
+    }
+
+    #[test]
+    fn config_parses_remote_mode_with_uri() {
+        let toml = r#"
+[storage]
+mode = "remote"
+uri = "shroudb://token@127.0.0.1:6399"
+"#;
+        let cfg: ShrouDBConfig = toml::from_str(toml).expect("parse failed");
+        assert_eq!(cfg.storage.mode, "remote");
+        assert_eq!(
+            cfg.storage.uri.as_deref(),
+            Some("shroudb://token@127.0.0.1:6399")
+        );
+    }
+
+    #[test]
+    fn config_parses_remote_mode_tls_uri() {
+        let toml = r#"
+[storage]
+mode = "remote"
+uri = "shroudb+tls://token@store.example.com:6399"
+"#;
+        let cfg: ShrouDBConfig = toml::from_str(toml).expect("parse failed");
+        assert_eq!(cfg.storage.mode, "remote");
+        assert_eq!(
+            cfg.storage.uri.as_deref(),
+            Some("shroudb+tls://token@store.example.com:6399")
+        );
+    }
 }

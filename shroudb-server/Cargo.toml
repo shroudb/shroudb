@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 shroudb-acl.workspace = true
+shroudb-client.workspace = true
 shroudb-protocol.workspace = true
 shroudb-server-tcp.workspace = true
 shroudb-store.workspace = true
