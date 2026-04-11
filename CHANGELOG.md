@@ -4,6 +4,12 @@ All notable changes to ShrouDB are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [v1.0.9] - 2026-04-11
+
+### Changed
+
+- Update shroudb-storage dependency to v0.2.18 (snapshot replication bootstrap, MED-05)
+
 ## [v1.0.8] - 2026-04-11
 
 ### Added

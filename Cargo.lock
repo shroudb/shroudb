@@ -2293,7 +2293,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shroudb"
-version = "1.0.8"
+version = "1.0.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -2336,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-cli"
-version = "1.0.8"
+version = "1.0.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -2348,7 +2348,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-client"
-version = "1.0.8"
+version = "1.0.9"
 dependencies = [
  "rustls",
  "rustls-native-certs",
@@ -2388,7 +2388,7 @@ dependencies = [
 
 [[package]]
 name = "shroudb-protocol"
-version = "1.0.8"
+version = "1.0.9"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2433,9 +2433,9 @@ dependencies = [
 
 [[package]]
 name = "shroudb-storage"
-version = "0.2.17"
+version = "0.2.18"
 source = "sparse+https://crates.shroudb.dev/api/v1/crates/"
-checksum = "37eac376af24371a09cfb5948ab25ff60d5018290b07278818001aa39c54a728"
+checksum = "f82141cd16a8306ddfc5a90c873ed71ee0bc74733a922b40b81bd552ef69879f"
 dependencies = [
  "crc32fast",
  "dashmap",
