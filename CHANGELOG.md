@@ -4,6 +4,25 @@ All notable changes to ShrouDB are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [v1.0.10] - 2026-04-11
+
+### Changed
+
+- Helm chart upgraded to v1.0.0 for production readiness (LOW-05)
+- Deployment replaced with StatefulSet for stable pod identity and ordered rollout
+- Added PodDisruptionBudget (enabled when replicas > 1)
+- Added ServiceMonitor for Prometheus Operator integration
+- Added NetworkPolicy for ingress restriction
+- Added headless Service for StatefulSet DNS
+- Added ServiceAccount with automountServiceAccountToken disabled
+- Added pod and container security contexts (non-root, read-only rootfs, drop all capabilities, seccomp)
+- Added pod anti-affinity (soft by default, configurable to hard)
+- Added startup probe for slow-starting pods
+- Added config checksum annotation for automatic rollout on config change
+- Added NOTES.txt post-install instructions
+- Added helm test (TCP connection check)
+- Chart appVersion updated to 1.0.9
+
 ## [v1.0.9] - 2026-04-11
 
 ### Changed

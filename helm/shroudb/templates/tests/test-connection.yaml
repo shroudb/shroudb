@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "shroudb.fullname" . }}-test-connection"
+  labels:
+    {{- include "shroudb.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: tcp-check
+      image: busybox:1.36
+      command: ['sh', '-c', 'nc -z {{ include "shroudb.fullname" . }} {{ .Values.service.resp3Port }} && echo "RESP3 port reachable"']
+  restartPolicy: Never

@@ -1,6 +1,14 @@
 apiVersion: v2
 name: shroudb
-description: ShrouDB credential management server
+description: ShrouDB encrypted key-value database
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 1.0.0
+appVersion: "1.0.10"
+keywords:
+  - shroudb
+  - encryption
+  - database
+  - security
+home: https://github.com/shroudb/shroudb
+sources:
+  - https://github.com/shroudb/shroudb

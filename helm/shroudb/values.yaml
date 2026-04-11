@@ -1,14 +1,46 @@
 replicaCount: 1
 
 image:
-  repository: shroudb
+  repository: shroudb/shroudb
   pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion
   tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  # name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
 
 service:
   type: ClusterIP
   resp3Port: 6399
   metricsPort: 9090
+
+# Headless service is always created for StatefulSet DNS
+headlessService:
+  annotations: {}
 
 resources:
   limits:
@@ -22,16 +54,54 @@ persistence:
   enabled: true
   size: 10Gi
   storageClass: ""
+  accessModes:
+    - ReadWriteOnce
 
-# Set via --set or external secret
+# Master key configuration — provide via existingSecret or the chart creates one
 masterKey:
   existingSecret: ""
   secretKey: "master-key"
 
+# ShrouDB server configuration (TOML)
 config: |
   [server]
   bind = "0.0.0.0:6399"
   metrics_bind = "0.0.0.0:9090"
+  shutdown_drain_secs = 5
 
   [storage]
   data_dir = "/data"
+
+# Graceful shutdown — should be >= shutdown_drain_secs in config
+terminationGracePeriodSeconds: 10
+
+# Pod anti-affinity to spread replicas across nodes
+podAntiAffinity:
+  enabled: true
+  # "soft" = preferredDuringSchedulingIgnoredDuringExecution
+  # "hard" = requiredDuringSchedulingIgnoredDuringExecution
+  type: soft
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# PodDisruptionBudget — created when replicaCount > 1
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# ServiceMonitor for Prometheus Operator
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  annotations: {}
+
+# NetworkPolicy — restrict ingress to RESP3 and metrics ports
+networkPolicy:
+  enabled: false
+  # Additional ingress rules beyond the default RESP3 + metrics ports
+  additionalIngress: []

@@ -1,10 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Release.Name }}-shroudb
+  name: {{ include "shroudb.fullname" . }}
   labels:
-    app.kubernetes.io/name: shroudb
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "shroudb.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -17,5 +16,25 @@ spec:
       protocol: TCP
       name: metrics
   selector:
-    app.kubernetes.io/name: shroudb
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "shroudb.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "shroudb.fullname" . }}-headless
+  labels:
+    {{- include "shroudb.labels" . | nindent 4 }}
+  {{- with .Values.headlessService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: {{ .Values.service.resp3Port }}
+      targetPort: resp3
+      protocol: TCP
+      name: resp3
+  selector:
+    {{- include "shroudb.selectorLabels" . | nindent 4 }}

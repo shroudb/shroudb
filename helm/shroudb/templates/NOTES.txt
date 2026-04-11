@@ -1,0 +1,20 @@
+ShrouDB has been deployed as a StatefulSet.
+
+Get the RESP3 endpoint:
+{{- if eq .Values.service.type "ClusterIP" }}
+  kubectl port-forward svc/{{ include "shroudb.fullname" . }} {{ .Values.service.resp3Port }}:{{ .Values.service.resp3Port }}
+{{- else if eq .Values.service.type "LoadBalancer" }}
+  export SERVICE_IP=$(kubectl get svc {{ include "shroudb.fullname" . }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo "RESP3: $SERVICE_IP:{{ .Values.service.resp3Port }}"
+{{- end }}
+
+Get the metrics endpoint:
+  kubectl port-forward svc/{{ include "shroudb.fullname" . }} {{ .Values.service.metricsPort }}:{{ .Values.service.metricsPort }}
+
+{{- if gt (int .Values.replicaCount) 1 }}
+
+Pods are addressable via the headless service:
+  {{ include "shroudb.fullname" . }}-0.{{ include "shroudb.fullname" . }}-headless
+  {{ include "shroudb.fullname" . }}-1.{{ include "shroudb.fullname" . }}-headless
+  ...
+{{- end }}
