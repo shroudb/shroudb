@@ -53,6 +53,7 @@ pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
         "HEALTH" => Ok(Command::Health),
         "CONFIG" => parse_config(args),
         "COMMAND" => parse_command_sub(args),
+        "REKEY" => parse_rekey(args),
         _ => Err(CommandError::BadArg {
             message: format!("unknown command: {verb}"),
         }),
@@ -590,6 +591,42 @@ fn parse_config(args: &[String]) -> Result<Command, CommandError> {
             message: format!("unknown CONFIG subcommand: {sub}"),
         }),
     }
+}
+
+// ── REKEY <new_key_hex> | REKEY STATUS ────────────────────────────────
+
+fn parse_rekey(args: &[String]) -> Result<Command, CommandError> {
+    if args.is_empty() {
+        return Err(CommandError::BadArg {
+            message: "REKEY requires a subcommand: <new_key_hex> or STATUS".into(),
+        });
+    }
+
+    if args[0].eq_ignore_ascii_case("STATUS") {
+        return Ok(Command::RekeyStatus);
+    }
+
+    // REKEY <new_key_hex>
+    let hex = &args[0];
+    if hex.len() != 64 {
+        return Err(CommandError::BadArg {
+            message: format!(
+                "REKEY key must be 32 bytes (64 hex chars), got {} chars",
+                hex.len()
+            ),
+        });
+    }
+
+    // Validate hex characters
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(CommandError::BadArg {
+            message: "REKEY key is not valid hex".into(),
+        });
+    }
+
+    Ok(Command::Rekey {
+        new_key_hex: hex.clone(),
+    })
 }
 
 // ── COMMAND LIST ─────────────────────────────────────────────────────

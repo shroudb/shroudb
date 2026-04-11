@@ -94,6 +94,14 @@ pub enum Command {
         value: String,
     },
     CommandList,
+
+    // ── Key management ──────────────────────────────────────────────
+    /// `REKEY <new_key_hex>` — begin online rekey with the given new master key.
+    Rekey {
+        new_key_hex: String,
+    },
+    /// `REKEY STATUS` — query progress of an in-flight rekey operation.
+    RekeyStatus,
 }
 
 // Re-export ACL types from shroudb-acl for use in acl_requirement().
@@ -108,13 +116,15 @@ impl Command {
             | Command::Ping
             | Command::Health
             | Command::ConfigGet { .. }
-            | Command::CommandList => AclRequirement::None,
+            | Command::CommandList
+            | Command::RekeyStatus => AclRequirement::None,
 
             // Admin — global privilege
             Command::NamespaceCreate { .. }
             | Command::NamespaceDrop { .. }
             | Command::NamespaceAlter { .. }
-            | Command::ConfigSet { .. } => AclRequirement::Admin,
+            | Command::ConfigSet { .. }
+            | Command::Rekey { .. } => AclRequirement::Admin,
 
             // Read — per-namespace
             Command::Get { ns, .. }
@@ -170,6 +180,8 @@ impl Command {
             Command::ConfigGet { .. } => "CONFIG GET",
             Command::ConfigSet { .. } => "CONFIG SET",
             Command::CommandList => "COMMAND LIST",
+            Command::Rekey { .. } => "REKEY",
+            Command::RekeyStatus => "REKEY STATUS",
         }
     }
 
@@ -186,6 +198,7 @@ impl Command {
                 | Command::Health
                 | Command::ConfigGet { .. }
                 | Command::CommandList
+                | Command::RekeyStatus
                 | Command::Ping
         )
     }

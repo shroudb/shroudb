@@ -4,6 +4,19 @@ All notable changes to ShrouDB are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [v1.0.11] - 2026-04-11
+
+### Added
+
+- `REKEY <new_key_hex>` command for online zero-downtime master key rotation (HIGH-10)
+- `REKEY STATUS` command to query rekey progress
+- Protocol spec updated with REKEY and REKEY STATUS definitions
+
+### Changed
+
+- Upgraded `shroudb-storage` to v0.3.0 for dual-key KeyManager and background re-encryption
+- Offline `rekey` subcommand now notes availability of online `REKEY` command
+
 ## [v1.0.10] - 2026-04-11
 
 ### Changed

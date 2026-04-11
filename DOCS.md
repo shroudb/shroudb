@@ -251,6 +251,8 @@ Without a master key, the server starts in dev mode with an ephemeral key -- dat
 | `HEALTH` | Check server health. |
 | `CONFIG GET key` | Read a runtime configuration value. |
 | `CONFIG SET key value` | Set a runtime configuration value (admin only). Only registered keys are accepted; values are type-checked. |
+| `REKEY new_key_hex` | Begin online zero-downtime master key rotation (admin only). Background re-encrypts WAL segments and takes a fresh snapshot. |
+| `REKEY STATUS` | Query progress of an in-flight rekey operation. Returns progress percentage, segments completed, and whether rekey is still running. |
 | `COMMAND LIST` | List all supported commands. |
 
 See [`protocol.toml`](protocol.toml) for the machine-readable protocol specification.
@@ -263,7 +265,7 @@ See [`protocol.toml`](protocol.toml) for the machine-readable protocol specifica
 # Health check without starting the server
 shroudb doctor --config config.toml
 
-# Re-key (rotate master encryption key -- server must be stopped)
+# Offline re-key (rotate master encryption key -- server must be stopped)
 shroudb rekey --old-key <old> --new-key <new> --config config.toml
 
 # Export a namespace to an encrypted bundle

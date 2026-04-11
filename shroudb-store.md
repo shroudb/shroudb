@@ -63,7 +63,7 @@ No Cargo feature flags. Gating is runtime:
 - **Core dump disabled** at startup via `shroudb_crypto::disable_core_dumps()`
 - **CRC32** integrity check on every WAL entry (tamper detection, not cryptographic)
 
-No key rotation without downtime — `rekey` subcommand requires server stopped, replays all WAL entries with new master key.
+Online key rotation available via `REKEY` command (zero-downtime). Offline `rekey` CLI subcommand also available for pre-boot rotation.
 
 ---
 
@@ -172,7 +172,7 @@ The moat is partly component-level (crypto constructs, WAL engine) and partly pl
 
 ## Gaps and Liabilities
 
-1. **Rekey requires downtime**: No online key rotation. Server must be stopped, `rekey` replays all WAL entries. Blocking for large datasets in production.
+1. ~~**Rekey requires downtime**~~: Online zero-downtime key rotation now available via the `REKEY` command (v1.0.11). Offline `rekey` CLI subcommand still available for pre-boot rotation.
 
 2. **Replication is pre-decision**: Phase 0 instrumentation exists (metrics), but no WAL streaming, no replica bootstrap, no failover. Single-node only. REPLICATION_PLAN.md is thorough but unimplemented.
 

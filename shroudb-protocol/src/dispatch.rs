@@ -264,6 +264,20 @@ impl<S: Store> CommandDispatcher<S> {
 
             Command::CommandList => handlers::command_list::handle().await,
 
+            Command::Rekey { new_key_hex } => match self.engine {
+                Some(ref engine) => handlers::rekey::handle_rekey(engine, &new_key_hex).await,
+                None => Err(CommandError::Internal(
+                    "REKEY not available in remote store mode".into(),
+                )),
+            },
+
+            Command::RekeyStatus => match self.engine {
+                Some(ref engine) => handlers::rekey::handle_rekey_status(engine).await,
+                None => Err(CommandError::Internal(
+                    "REKEY STATUS not available in remote store mode".into(),
+                )),
+            },
+
             // ── Streaming ────────────────────────────────────────────
             Command::Subscribe { .. } => Err(CommandError::BadArg {
                 message: "SUBSCRIBE must be handled at the connection level".into(),

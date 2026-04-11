@@ -685,8 +685,8 @@ async fn run_rekey(
         "Rekey complete. Update SHROUDB_MASTER_KEY to the new key before starting the server."
     );
     eprintln!();
-    eprintln!("NOTE: This is an offline operation. The server was not running during rekey.");
-    eprintln!("      Online (zero-downtime) rekey is planned for a future release.");
+    eprintln!("NOTE: This is an offline rekey. For zero-downtime rekey, use the REKEY command");
+    eprintln!("      on a running server (requires admin ACL).");
 
     Ok(())
 }

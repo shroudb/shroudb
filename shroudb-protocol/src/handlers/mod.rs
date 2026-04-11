@@ -6,4 +6,5 @@ pub mod health;
 pub mod list;
 pub mod namespace;
 pub mod put;
+pub mod rekey;
 pub mod versions;

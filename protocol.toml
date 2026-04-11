@@ -430,3 +430,28 @@ acl = "none"
 [commands."COMMAND LIST".response]
 count = "integer"
 commands = "array<string>"
+
+# ─── Key management ─────────────────────────────────────────────────────────
+
+[commands.REKEY]
+description = "Begin online rekey (zero-downtime master key rotation)"
+acl = "admin"
+
+[commands.REKEY.params.new_key_hex]
+type = "string"
+required = true
+description = "New master key as 64-character hex string (32 bytes)"
+
+[commands.REKEY.response]
+message = "string"
+
+[commands."REKEY STATUS"]
+description = "Query progress of an in-flight rekey operation"
+acl = "none"
+
+[commands."REKEY STATUS".response]
+in_progress = "boolean"
+progress = "string"
+segments_completed = "integer"
+total_segments = "integer"
+started_at = "integer"
