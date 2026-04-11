@@ -4,6 +4,19 @@ All notable changes to ShrouDB are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [v1.0.8] - 2026-04-11
+
+### Added
+
+- RemoteStore streaming subscriptions via dedicated TCP connections (LOW-02)
+- `Connection::read_response_streaming()` for timeout-free push frame reading
+- 6 unit tests for push frame parsing, 3 integration tests for subscription lifecycle
+
+### Changed
+
+- `RemoteStore::new()` now requires URI for spawning subscription connections
+- `RemoteStore::subscribe()` opens a dedicated connection, sends SUBSCRIBE, and relays events through an mpsc channel
+
 ## [v1.0.4] - 2026-04-09
 
 ### Added

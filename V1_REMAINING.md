@@ -198,7 +198,7 @@ All features implemented. Pipeline rewritten as single nested RESP3 array (not t
 | Feature | Implemented | Tested |
 |---------|:-----------:|:------:|
 | PUT/GET/DELETE/LIST/VERSIONS | Yes | Yes |
-| SUBSCRIBE + push frames | Yes | No |
+| SUBSCRIBE + push frames | Yes | Yes |
 | Webhooks (HMAC, retry, filter) | Yes | No |
 | Pipeline (nested RESP3 array) | Yes | No |
 | Pipeline idempotency (REQUEST_ID) | Yes | Unit only |

@@ -93,7 +93,7 @@ ACL enforcement is built into the dispatch layer (`shroudb-protocol/src/dispatch
 ShrouDB defines the canonical Store trait (in `shroudb-store` crate). This repo provides two implementations:
 
 - **EmbeddedStore** (from `shroudb-storage`): WAL-backed, AES-256-GCM encrypted, DashMap in-memory index with optional LRU bounded cache. Supports snapshot compaction, tombstone TTL, crash recovery.
-- **RemoteStore** (in `shroudb-client`): Wraps `ShrouDBClient` in `Arc<Mutex<>>`, sends RESP3 commands over TCP/TLS, maps responses back to Store types. Subscription stub (returns None — requires dedicated streaming connection).
+- **RemoteStore** (in `shroudb-client`): Wraps `ShrouDBClient` in `Arc<Mutex<>>`, sends RESP3 commands over TCP/TLS, maps responses back to Store types. Subscriptions open a dedicated streaming connection per subscription.
 
 Storage backends: WAL segments + periodic snapshots on local filesystem. No pluggable backend abstraction at this layer — the storage engine is the WAL.
 
@@ -180,7 +180,7 @@ The moat is partly component-level (crypto constructs, WAL engine) and partly pl
 
 4. ~~**CONFIG SET has no schema enforcement**~~: Resolved — schema registry wired up with type-checked keys (max_segment_bytes, max_segment_entries, snapshot_entry_threshold, snapshot_time_threshold_secs). Unknown keys rejected at runtime.
 
-5. **RemoteStore subscription stub**: `subscribe()` returns None. Streaming over RemoteStore not implemented — engines using subscriptions must use EmbeddedStore or handle streaming separately.
+5. ~~**RemoteStore subscription stub**~~: Resolved — `subscribe()` opens a dedicated streaming connection per subscription, relays RESP3 push frames as `SubscriptionEvent` values through an mpsc channel. Both EmbeddedStore and RemoteStore now support subscriptions.
 
 6. **No LICENSE file in repo root**: License declared in Cargo.toml and Dockerfile labels but no LICENSE or LICENSE-MIT/LICENSE-APACHE file. Could block adoption by compliance-conscious users.
 

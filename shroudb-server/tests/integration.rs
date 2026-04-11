@@ -2,7 +2,7 @@ mod common;
 
 use common::*;
 use shroudb_client::RemoteStore;
-use shroudb_store::Store;
+use shroudb_store::{Store, Subscription, SubscriptionFilter};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::Command;
@@ -1328,10 +1328,8 @@ async fn remote_store_put_get_delete() {
     let server = TestServer::start().await.expect("server failed to start");
 
     // Connect via RemoteStore (Store trait, not ShrouDBClient)
-    let client = shroudb_client::ShrouDBClient::connect(&server.addr)
-        .await
-        .unwrap();
-    let store = RemoteStore::new(client);
+    let uri = format!("shroudb://{}", server.addr);
+    let store = RemoteStore::connect(&uri).await.unwrap();
 
     // Use the Store trait — this is how engines will call it
     store
@@ -1365,10 +1363,8 @@ async fn remote_store_put_get_delete() {
 #[tokio::test]
 async fn remote_store_list_and_versions() {
     let server = TestServer::start().await.expect("server failed to start");
-    let client = shroudb_client::ShrouDBClient::connect(&server.addr)
-        .await
-        .unwrap();
-    let store = RemoteStore::new(client);
+    let uri = format!("shroudb://{}", server.addr);
+    let store = RemoteStore::connect(&uri).await.unwrap();
 
     store
         .namespace_create("rs-list", Default::default())
@@ -1389,10 +1385,8 @@ async fn remote_store_list_and_versions() {
 #[tokio::test]
 async fn remote_store_namespace_lifecycle() {
     let server = TestServer::start().await.expect("server failed to start");
-    let client = shroudb_client::ShrouDBClient::connect(&server.addr)
-        .await
-        .unwrap();
-    let store = RemoteStore::new(client);
+    let uri = format!("shroudb://{}", server.addr);
+    let store = RemoteStore::connect(&uri).await.unwrap();
 
     store
         .namespace_create("rs-ns", Default::default())
@@ -1903,4 +1897,129 @@ async fn master_key_wrong_key_cannot_read_data() {
         }
     }
     // If server2 didn't start at all (WAL recovery failed with wrong key), that's also correct
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// RemoteStore subscriptions
+// ═══════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn remote_store_subscribe_receives_events() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let uri = format!("shroudb://{}", server.addr);
+    let store = RemoteStore::connect(&uri).await.unwrap();
+
+    store
+        .namespace_create("sub-test", Default::default())
+        .await
+        .unwrap();
+
+    // Subscribe to all events on the namespace
+    let mut sub = store
+        .subscribe(
+            "sub-test",
+            SubscriptionFilter {
+                key: None,
+                events: vec![],
+            },
+        )
+        .await
+        .unwrap();
+
+    // Write data on a separate connection (the main client) to trigger events
+    let store2 = RemoteStore::connect(&uri).await.unwrap();
+    store2
+        .put("sub-test", b"key1", b"hello", None)
+        .await
+        .unwrap();
+    store2
+        .put("sub-test", b"key2", b"world", None)
+        .await
+        .unwrap();
+    store2.delete("sub-test", b"key1").await.unwrap();
+
+    // Receive events with a timeout to prevent hanging
+    let event1 = tokio::time::timeout(Duration::from_secs(5), sub.recv())
+        .await
+        .expect("timeout waiting for event 1")
+        .expect("subscription closed unexpectedly");
+    assert_eq!(event1.event, shroudb_store::EventType::Put);
+    assert_eq!(event1.key, b"key1");
+    assert_eq!(event1.version, 1);
+
+    let event2 = tokio::time::timeout(Duration::from_secs(5), sub.recv())
+        .await
+        .expect("timeout waiting for event 2")
+        .expect("subscription closed unexpectedly");
+    assert_eq!(event2.event, shroudb_store::EventType::Put);
+    assert_eq!(event2.key, b"key2");
+
+    let event3 = tokio::time::timeout(Duration::from_secs(5), sub.recv())
+        .await
+        .expect("timeout waiting for event 3")
+        .expect("subscription closed unexpectedly");
+    assert_eq!(event3.event, shroudb_store::EventType::Delete);
+    assert_eq!(event3.key, b"key1");
+    assert_eq!(event3.version, 2); // version is per-key: PUT(v1) then DELETE(v2)
+}
+
+#[tokio::test]
+async fn remote_store_subscribe_key_filter() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let uri = format!("shroudb://{}", server.addr);
+    let store = RemoteStore::connect(&uri).await.unwrap();
+
+    store
+        .namespace_create("sub-filter", Default::default())
+        .await
+        .unwrap();
+
+    // Subscribe only to events on "target"
+    let mut sub = store
+        .subscribe(
+            "sub-filter",
+            SubscriptionFilter {
+                key: Some(b"target".to_vec()),
+                events: vec![],
+            },
+        )
+        .await
+        .unwrap();
+
+    // Write to both "other" and "target" — only "target" events should arrive
+    let store2 = RemoteStore::connect(&uri).await.unwrap();
+    store2
+        .put("sub-filter", b"other", b"ignored", None)
+        .await
+        .unwrap();
+    store2
+        .put("sub-filter", b"target", b"wanted", None)
+        .await
+        .unwrap();
+
+    let event = tokio::time::timeout(Duration::from_secs(5), sub.recv())
+        .await
+        .expect("timeout waiting for filtered event")
+        .expect("subscription closed unexpectedly");
+    assert_eq!(event.key, b"target");
+    assert_eq!(event.event, shroudb_store::EventType::Put);
+}
+
+#[tokio::test]
+async fn remote_store_subscribe_nonexistent_namespace() {
+    let server = TestServer::start().await.expect("server failed to start");
+    let uri = format!("shroudb://{}", server.addr);
+    let store = RemoteStore::connect(&uri).await.unwrap();
+
+    // Subscribing to a namespace that doesn't exist should fail
+    let result = store
+        .subscribe(
+            "nonexistent",
+            SubscriptionFilter {
+                key: None,
+                events: vec![],
+            },
+        )
+        .await;
+    assert!(result.is_err());
 }

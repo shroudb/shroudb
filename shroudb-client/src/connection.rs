@@ -157,6 +157,14 @@ impl Connection {
         .map_err(|_| ClientError::Timeout)?
     }
 
+    /// Read a single response without a timeout.
+    ///
+    /// Used for streaming contexts (e.g. SUBSCRIBE) where the server sends
+    /// push frames asynchronously and there is no bounded response time.
+    pub async fn read_response_streaming(&mut self) -> Result<Response, ClientError> {
+        read_value(&mut self.reader).await
+    }
+
     async fn write_command(&mut self, args: &[String]) -> io::Result<()> {
         // *N\r\n followed by N bulk strings
         self.writer
