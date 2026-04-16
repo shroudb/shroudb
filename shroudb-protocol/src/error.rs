@@ -34,9 +34,42 @@ pub enum CommandError {
     #[error("pipeline aborted: command {index} failed: {reason}")]
     PipelineAborted { index: usize, reason: String },
 
+    /// Compare-and-swap precondition failed. The wire format carries `current`
+    /// so callers can retry without a second round-trip: `VERSIONCONFLICT current=5`.
+    #[error("VERSIONCONFLICT current={current}")]
+    VersionConflict { current: u64 },
+
+    /// Prefix-delete matched more keys than the configured per-call cap.
+    /// Wire format: `PREFIXTOOLARGE matched=N limit=M`.
+    #[error("PREFIXTOOLARGE matched={matched} limit={limit}")]
+    PrefixTooLarge { matched: u64, limit: u64 },
+
     #[error("store error: {0}")]
     Store(#[from] shroudb_store::StoreError),
 
     #[error("internal error: {0}")]
     Internal(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_conflict_wire_format() {
+        let err = CommandError::VersionConflict { current: 5 };
+        assert_eq!(err.to_string(), "VERSIONCONFLICT current=5");
+    }
+
+    #[test]
+    fn prefix_too_large_wire_format() {
+        let err = CommandError::PrefixTooLarge {
+            matched: 150_000,
+            limit: 100_000,
+        };
+        assert_eq!(
+            err.to_string(),
+            "PREFIXTOOLARGE matched=150000 limit=100000"
+        );
+    }
 }
