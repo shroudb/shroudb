@@ -129,8 +129,42 @@ fn parse_push_frame(resp: &Response) -> Option<SubscriptionEvent> {
     })
 }
 
+/// Parse `VERSIONCONFLICT current=N` error strings into their structured
+/// form. Wire format is fixed and covered by the server-side unit test
+/// `version_conflict_wire_format` — do not change without updating both.
+fn parse_version_conflict(msg: &str) -> Option<u64> {
+    let body = msg.strip_prefix("VERSIONCONFLICT ")?.trim_start();
+    let current_field = body.strip_prefix("current=")?;
+    current_field.parse().ok()
+}
+
+/// Parse `PREFIXTOOLARGE matched=N limit=M` error strings. Wire format is
+/// fixed and covered by `prefix_too_large_wire_format`.
+fn parse_prefix_too_large(msg: &str) -> Option<(u64, u64)> {
+    let body = msg.strip_prefix("PREFIXTOOLARGE ")?.trim_start();
+    let mut matched = None;
+    let mut limit = None;
+    for field in body.split_whitespace() {
+        if let Some(v) = field.strip_prefix("matched=") {
+            matched = v.parse().ok();
+        } else if let Some(v) = field.strip_prefix("limit=") {
+            limit = v.parse().ok();
+        }
+    }
+    Some((matched?, limit?))
+}
+
 fn client_err(e: ClientError) -> StoreError {
     match e {
+        ClientError::Server(msg) if parse_version_conflict(&msg).is_some() => {
+            StoreError::VersionConflict {
+                current: parse_version_conflict(&msg).expect("just matched"),
+            }
+        }
+        ClientError::Server(msg) if parse_prefix_too_large(&msg).is_some() => {
+            let (matched, limit) = parse_prefix_too_large(&msg).expect("just matched");
+            StoreError::PrefixTooLarge { matched, limit }
+        }
         ClientError::Server(msg) if msg.contains("not found") => StoreError::NotFound,
         ClientError::Server(msg) if msg.contains("namespace not found") => {
             // Extract namespace name if possible
@@ -149,6 +183,27 @@ fn client_err(e: ClientError) -> StoreError {
         ClientError::Connection(e) => StoreError::Connection(e.to_string()),
         ClientError::Timeout => StoreError::Connection("timeout".into()),
         other => StoreError::Storage(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod error_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn parses_version_conflict() {
+        assert_eq!(parse_version_conflict("VERSIONCONFLICT current=5"), Some(5));
+        assert_eq!(parse_version_conflict("VERSIONCONFLICT current=0"), Some(0));
+        assert_eq!(parse_version_conflict("version not found"), None);
+    }
+
+    #[test]
+    fn parses_prefix_too_large() {
+        assert_eq!(
+            parse_prefix_too_large("PREFIXTOOLARGE matched=200 limit=100"),
+            Some((200, 100))
+        );
+        assert_eq!(parse_prefix_too_large("not found"), None);
     }
 }
 
@@ -197,6 +252,75 @@ impl Store for RemoteStore {
     async fn delete(&self, ns: &str, key: &[u8]) -> Result<u64, StoreError> {
         let mut client = self.client.lock().await;
         client.delete(ns, key).await.map_err(client_err)
+    }
+
+    async fn put_if_version(
+        &self,
+        ns: &str,
+        key: &[u8],
+        value: &[u8],
+        metadata: Option<Metadata>,
+        expected_version: u64,
+    ) -> Result<u64, StoreError> {
+        let mut client = self.client.lock().await;
+        let meta_json = metadata.map(|m| shroudb_store::metadata_to_json(&m).to_string());
+        let key_str = String::from_utf8_lossy(key).into_owned();
+        let value_str = String::from_utf8_lossy(value).into_owned();
+        let expected_str = expected_version.to_string();
+
+        let mut args: Vec<&str> = vec!["PUTIF", ns, &key_str, &value_str, "EXPECT", &expected_str];
+        if let Some(ref m) = meta_json {
+            args.push("META");
+            args.push(m);
+        }
+
+        let resp = client.raw_command(&args).await.map_err(client_err)?;
+        if let Response::Error(msg) = &resp {
+            return Err(client_err(ClientError::Server(msg.clone())));
+        }
+        let version = resp
+            .get_field("version")
+            .and_then(|r| r.as_int())
+            .ok_or_else(|| StoreError::Storage("missing version field".into()))?;
+        Ok(version as u64)
+    }
+
+    async fn delete_if_version(
+        &self,
+        ns: &str,
+        key: &[u8],
+        expected_version: u64,
+    ) -> Result<u64, StoreError> {
+        let mut client = self.client.lock().await;
+        let key_str = String::from_utf8_lossy(key).into_owned();
+        let expected_str = expected_version.to_string();
+        let args: Vec<&str> = vec!["DELIF", ns, &key_str, "EXPECT", &expected_str];
+
+        let resp = client.raw_command(&args).await.map_err(client_err)?;
+        if let Response::Error(msg) = &resp {
+            return Err(client_err(ClientError::Server(msg.clone())));
+        }
+        let version = resp
+            .get_field("version")
+            .and_then(|r| r.as_int())
+            .ok_or_else(|| StoreError::Storage("missing version field".into()))?;
+        Ok(version as u64)
+    }
+
+    async fn delete_prefix(&self, ns: &str, prefix: &[u8]) -> Result<u64, StoreError> {
+        let mut client = self.client.lock().await;
+        let prefix_str = String::from_utf8_lossy(prefix).into_owned();
+        let args: Vec<&str> = vec!["DELPREFIX", ns, &prefix_str];
+
+        let resp = client.raw_command(&args).await.map_err(client_err)?;
+        if let Response::Error(msg) = &resp {
+            return Err(client_err(ClientError::Server(msg.clone())));
+        }
+        let deleted = resp
+            .get_field("deleted")
+            .and_then(|r| r.as_int())
+            .ok_or_else(|| StoreError::Storage("missing deleted field".into()))?;
+        Ok(deleted as u64)
     }
 
     async fn list(
@@ -394,31 +518,71 @@ impl Store for RemoteStore {
     ) -> Result<Vec<PipelineResult>, StoreError> {
         let mut client = self.client.lock().await;
 
-        let cmd_args: Vec<Vec<&str>> = commands
+        // Build owned Vec<Vec<String>> so we can include formatted integers
+        // (EXPECT <version>) without lifetime gymnastics, then slice-borrow
+        // for the wire call.
+        let cmd_args: Vec<Vec<String>> = commands
             .iter()
             .map(|cmd| match cmd {
                 PipelineCommand::Put { ns, key, value, .. } => {
                     vec![
-                        "PUT",
-                        ns.as_str(),
-                        std::str::from_utf8(key).unwrap_or(""),
-                        std::str::from_utf8(value).unwrap_or(""),
+                        "PUT".to_string(),
+                        ns.clone(),
+                        String::from_utf8_lossy(key).into_owned(),
+                        String::from_utf8_lossy(value).into_owned(),
                     ]
                 }
                 PipelineCommand::Get { ns, key, .. } => {
-                    vec!["GET", ns.as_str(), std::str::from_utf8(key).unwrap_or("")]
+                    vec![
+                        "GET".to_string(),
+                        ns.clone(),
+                        String::from_utf8_lossy(key).into_owned(),
+                    ]
                 }
                 PipelineCommand::Delete { ns, key } => {
                     vec![
-                        "DELETE",
-                        ns.as_str(),
-                        std::str::from_utf8(key).unwrap_or(""),
+                        "DELETE".to_string(),
+                        ns.clone(),
+                        String::from_utf8_lossy(key).into_owned(),
+                    ]
+                }
+                PipelineCommand::PutIfVersion {
+                    ns,
+                    key,
+                    value,
+                    expected_version,
+                    ..
+                } => {
+                    vec![
+                        "PUTIF".to_string(),
+                        ns.clone(),
+                        String::from_utf8_lossy(key).into_owned(),
+                        String::from_utf8_lossy(value).into_owned(),
+                        "EXPECT".to_string(),
+                        expected_version.to_string(),
+                    ]
+                }
+                PipelineCommand::DeleteIfVersion {
+                    ns,
+                    key,
+                    expected_version,
+                } => {
+                    vec![
+                        "DELIF".to_string(),
+                        ns.clone(),
+                        String::from_utf8_lossy(key).into_owned(),
+                        "EXPECT".to_string(),
+                        expected_version.to_string(),
                     ]
                 }
             })
             .collect();
 
-        let cmd_slices: Vec<&[&str]> = cmd_args.iter().map(|v| v.as_slice()).collect();
+        let cmd_strs: Vec<Vec<&str>> = cmd_args
+            .iter()
+            .map(|v| v.iter().map(String::as_str).collect())
+            .collect();
+        let cmd_slices: Vec<&[&str]> = cmd_strs.iter().map(|v| v.as_slice()).collect();
         let results = client
             .pipeline(&cmd_slices, None)
             .await
@@ -451,6 +615,14 @@ impl Store for RemoteStore {
                     }));
                 }
                 PipelineCommand::Delete { .. } => {
+                    let version = resp.get_int_field("version").unwrap_or(0) as u64;
+                    pipeline_results.push(PipelineResult::Delete(version));
+                }
+                PipelineCommand::PutIfVersion { .. } => {
+                    let version = resp.get_int_field("version").unwrap_or(0) as u64;
+                    pipeline_results.push(PipelineResult::Put(version));
+                }
+                PipelineCommand::DeleteIfVersion { .. } => {
                     let version = resp.get_int_field("version").unwrap_or(0) as u64;
                     pipeline_results.push(PipelineResult::Delete(version));
                 }

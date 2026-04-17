@@ -1324,6 +1324,61 @@ async fn corrupt_wal_segment_handled_gracefully() {
 // ═══════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
+async fn remote_store_cas_put_and_delete() {
+    let server = TestServer::start().await.expect("server failed to start");
+
+    let uri = format!("shroudb://{}", server.addr);
+    let store = RemoteStore::connect(&uri).await.unwrap();
+
+    store
+        .namespace_create("cas", Default::default())
+        .await
+        .unwrap();
+
+    // PUTIF EXPECT 0 on missing key succeeds (insert-only)
+    let v1 = store
+        .put_if_version("cas", b"k", b"v1", None, 0)
+        .await
+        .unwrap();
+    assert_eq!(v1, 1);
+
+    // PUTIF EXPECT 0 on existing key → VersionConflict { current: 1 }
+    let err = store
+        .put_if_version("cas", b"k", b"v2", None, 0)
+        .await
+        .unwrap_err();
+    match err {
+        shroudb_store::StoreError::VersionConflict { current } => assert_eq!(current, 1),
+        other => panic!("expected VersionConflict, got {other:?}"),
+    }
+
+    // PUTIF EXPECT 1 succeeds → v2
+    let v2 = store
+        .put_if_version("cas", b"k", b"v2", None, 1)
+        .await
+        .unwrap();
+    assert_eq!(v2, 2);
+
+    // DELIF EXPECT 1 mismatch → current=2
+    let err = store.delete_if_version("cas", b"k", 1).await.unwrap_err();
+    match err {
+        shroudb_store::StoreError::VersionConflict { current } => assert_eq!(current, 2),
+        other => panic!("expected VersionConflict, got {other:?}"),
+    }
+
+    // DELIF EXPECT 2 succeeds
+    let tomb = store.delete_if_version("cas", b"k", 2).await.unwrap();
+    assert_eq!(tomb, 3);
+
+    // Post-delete, PUTIF EXPECT 0 resurrects
+    let v4 = store
+        .put_if_version("cas", b"k", b"v4", None, 0)
+        .await
+        .unwrap();
+    assert_eq!(v4, 4);
+}
+
+#[tokio::test]
 async fn remote_store_put_get_delete() {
     let server = TestServer::start().await.expect("server failed to start");
 

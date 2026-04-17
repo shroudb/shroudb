@@ -1,10 +1,13 @@
 pub mod command_list;
 pub mod config;
+pub mod del_if;
+pub mod del_prefix;
 pub mod delete;
 pub mod get;
 pub mod health;
 pub mod list;
 pub mod namespace;
 pub mod put;
+pub mod put_if;
 pub mod rekey;
 pub mod versions;

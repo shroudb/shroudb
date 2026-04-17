@@ -65,6 +65,20 @@ http_equiv = 400
 description = "Pipeline command failed, all commands rolled back"
 http_equiv = 409
 
+[error_codes.VERSION_CONFLICT]
+description = """Compare-and-swap precondition failed. The error carries the \
+actual current version so clients can retry without re-reading. Wire format: \
+`VERSIONCONFLICT current=<n>`."""
+http_equiv = 409
+data = { current = "integer" }
+
+[error_codes.PREFIX_TOO_LARGE]
+description = """A DELPREFIX call matched more keys than the configured \
+per-call cap. No keys were deleted. Caller should refine the prefix and \
+retry. Wire format: `PREFIXTOOLARGE matched=<n> limit=<m>`."""
+http_equiv = 413
+data = { matched = "integer", limit = "integer" }
+
 # ─── Connection commands ──────────────────────────────────────────────────────
 
 [commands.AUTH]
@@ -120,6 +134,15 @@ type = "keyword_json"
 required = false
 description = "JSON metadata object"
 
+[[commands.PUT.params]]
+name = "TTL"
+type = "keyword_integer"
+required = false
+description = """Optional expiry in milliseconds. The entry is auto-deleted \
+at or after server wall clock reaches (now_ms + TTL). TTL is entry-level \
+and is NOT inherited across writes: a subsequent PUT/PUTIF without TTL \
+writes a TTL-less entry."""
+
 [commands.PUT.response]
 version = "integer"
 
@@ -171,6 +194,89 @@ required = true
 
 [commands.DELETE.response]
 version = "integer"
+
+[commands.PUTIF]
+description = """Compare-and-swap PUT. Writes only if the key's current active \
+version equals EXPECT. On mismatch returns VERSIONCONFLICT carrying the actual \
+current version. EXPECT 0 means "key must not exist or must be tombstoned"."""
+acl = "write"
+
+[[commands.PUTIF.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.PUTIF.params]]
+name = "key"
+type = "string"
+required = true
+
+[[commands.PUTIF.params]]
+name = "value"
+type = "string"
+required = true
+
+[[commands.PUTIF.params]]
+name = "EXPECT"
+type = "keyword_integer"
+required = true
+description = "Expected current version (0 = key must not exist / be tombstoned)"
+
+[[commands.PUTIF.params]]
+name = "META"
+type = "keyword_json"
+required = false
+description = "JSON metadata object"
+
+[commands.PUTIF.response]
+version = "integer"
+
+[commands.DELIF]
+description = """Compare-and-swap DELETE. Writes a tombstone only if the key's \
+current active version equals EXPECT. On mismatch returns VERSIONCONFLICT. \
+Missing or tombstoned keys return NOTFOUND regardless of EXPECT."""
+acl = "write"
+
+[[commands.DELIF.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.DELIF.params]]
+name = "key"
+type = "string"
+required = true
+
+[[commands.DELIF.params]]
+name = "EXPECT"
+type = "keyword_integer"
+required = true
+description = "Expected current version of the active entry"
+
+[commands.DELIF.response]
+version = "integer"
+
+[commands.DELPREFIX]
+description = """Tombstone every active key in the namespace whose byte \
+representation starts with the given prefix. Held under the per-namespace \
+write lock. Empty prefix is rejected — use NAMESPACE DROP for full \
+teardown. Over the per-call cap, returns PREFIXTOOLARGE with no partial \
+deletion."""
+acl = "write"
+
+[[commands.DELPREFIX.params]]
+name = "namespace"
+type = "string"
+required = true
+
+[[commands.DELPREFIX.params]]
+name = "prefix"
+type = "string"
+required = true
+description = "Non-empty byte prefix"
+
+[commands.DELPREFIX.response]
+deleted = "integer"
 
 [commands.LIST]
 description = """List active keys in a namespace. \

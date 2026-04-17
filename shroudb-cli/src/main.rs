@@ -11,8 +11,11 @@ const COMMANDS: &[&str] = &[
     "AUTH",
     "PING",
     "PUT",
+    "PUTIF",
     "GET",
     "DELETE",
+    "DELIF",
+    "DELPREFIX",
     "LIST",
     "VERSIONS",
     "NAMESPACE",
@@ -336,13 +339,19 @@ fn print_command_help(cmd: &str) {
     match cmd.to_uppercase().as_str() {
         "PUT" => println!(
             r#"PUT <namespace> <key> <value>
-PUT <namespace> <key> VALUE <value> META <json>
+PUT <namespace> <key> VALUE <value> META <json> TTL <ms>
 
   Store a value at the given key. Auto-increments the version.
+
+  TTL  Optional expiry in milliseconds. The entry is auto-deleted
+       at or after (server wall clock + TTL). Entry-level; a later
+       PUT/PUTIF without TTL writes a TTL-less entry — TTL is NOT
+       inherited across writes.
 
   Example:
     PUT myapp.users user:1 alice
     PUT myapp.users user:1 VALUE alice META '{{"role":"admin"}}'
+    PUT myapp.sessions sess:abc token TTL 3600000
 "#
         ),
         "GET" => println!(
@@ -366,6 +375,60 @@ PUT <namespace> <key> VALUE <value> META <json>
 
   Example:
     DELETE myapp.sessions sess:abc
+"#
+        ),
+        "PUTIF" => println!(
+            r#"PUTIF <namespace> <key> <value> EXPECT <version> [META <json>]
+
+  Compare-and-swap PUT. Writes the entry only if the key's current
+  active version matches EXPECT. On mismatch returns:
+
+    -VERSIONCONFLICT current=<actual>
+
+  so the caller can retry without re-reading the key first.
+
+  EXPECT 0 means "key must not exist or must be tombstoned"
+  (insert-or-resurrect). EXPECT N > 0 means "current version
+  must equal N" (strict update; resurrection from a matching
+  tombstone version also works).
+
+  Example:
+    PUTIF myapp.users user:1 alice EXPECT 0
+    PUTIF myapp.users user:1 alice-updated EXPECT 3
+"#
+        ),
+        "DELIF" => println!(
+            r#"DELIF <namespace> <key> EXPECT <version>
+
+  Compare-and-swap DELETE. Writes a tombstone only if the key's
+  current active version matches EXPECT. On mismatch returns:
+
+    -VERSIONCONFLICT current=<actual>
+
+  A missing or already-tombstoned key returns -NOTFOUND regardless
+  of EXPECT.
+
+  Example:
+    DELIF myapp.sessions sess:abc EXPECT 2
+"#
+        ),
+        "DELPREFIX" => println!(
+            r#"DELPREFIX <namespace> <prefix>
+
+  Tombstone all active keys in the namespace whose byte
+  representation starts with <prefix>. Returns {{deleted: <count>}}.
+
+  Empty prefix is rejected — use NAMESPACE DROP for full teardown.
+  If the prefix matches more than the configured per-call cap
+  (default 100,000), returns:
+
+    -PREFIXTOOLARGE matched=<n> limit=<m>
+
+  and no keys are deleted. The caller refines the prefix and
+  retries.
+
+  Example:
+    DELPREFIX myapp.sessions user:alice:
 "#
         ),
         "LIST" => println!(

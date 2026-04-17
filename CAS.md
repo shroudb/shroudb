@@ -360,15 +360,7 @@ Step 1 ships CAS inside pipelines using the existing `StoreError::PipelineAborte
 
 **Follow-up:** if callers need per-step conflict tolerance (e.g., batch with "try CAS on 10 keys, apply the ones that matched"), add a `PipelineResult::VersionConflict { current }` variant that lets the batch proceed. Deferred until a real caller needs it — speculative design otherwise.
 
-### 7.5 Pipeline same-key staging bug (pre-existing)
-
-Surfaced while writing the ns-lock tests in step 0. A pipeline that issues multiple puts to the *same key* stages every put against the same pre-pipeline `current_version` — all four stage `version = pre + 1`, then the apply phase overwrites them in order and only the last wins (from the index's POV), but each returned `PipelineResult::Put(v)` carries the same value.
-
-This is a **pre-existing bug**, not introduced by v2. The ns-lock added in step 0 prevents the cross-pipeline version collision; it does not fix the intra-pipeline same-key staging.
-
-**Follow-up:** fix the staging loop to simulate a running version counter per `(ns, key)` within the pipeline, so `N` puts to the same key stage as `pre+1 .. pre+N`. Separate effort — not in v2 scope.
-
-### 7.6 Prefix-delete cursor pagination
+### 7.5 Prefix-delete cursor pagination
 
 Step 4 caps `delete_prefix` at 100k keys (configurable) and returns `PrefixTooLarge` on breach. The caller refines the prefix and retries.
 

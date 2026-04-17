@@ -553,6 +553,7 @@ async fn run_rekey(
                     wal_position: record.wal_position,
                     vlog_offset: record.vlog_offset,
                     vlog_generation: record.vlog_generation,
+                    expires_at_ms: record.expires_at_ms,
                 })
                 .collect();
             keys.push((key, versions));

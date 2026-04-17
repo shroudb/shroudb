@@ -45,6 +45,9 @@ pub fn parse_command(frame: Resp3Frame) -> Result<Command, CommandError> {
         "PUT" => parse_put(args),
         "GET" => parse_get(args),
         "DELETE" => parse_delete(args),
+        "PUTIF" => parse_put_if(args),
+        "DELIF" => parse_del_if(args),
+        "DELPREFIX" => parse_del_prefix(args),
         "LIST" => parse_list(args),
         "VERSIONS" => parse_versions(args),
         "NAMESPACE" => parse_namespace(args),
@@ -92,7 +95,7 @@ fn parse_auth(args: &[String]) -> Result<Command, CommandError> {
     })
 }
 
-// ── PUT <ns> <key> [VALUE <bytes>] [META <json>] ─────────────────────
+// ── PUT <ns> <key> [VALUE <bytes>] [META <json>] [TTL <ms>] ─────────
 
 fn parse_put(args: &[String]) -> Result<Command, CommandError> {
     require_args(args, 2, "PUT")?;
@@ -101,6 +104,7 @@ fn parse_put(args: &[String]) -> Result<Command, CommandError> {
 
     let mut value = Vec::new();
     let mut metadata = None;
+    let mut ttl_ms: Option<u64> = None;
     let mut i = 2;
 
     // Three-arg form: PUT ns key value (positional, no keywords)
@@ -113,6 +117,7 @@ fn parse_put(args: &[String]) -> Result<Command, CommandError> {
             key,
             value,
             metadata,
+            ttl_ms,
         });
     }
 
@@ -138,6 +143,16 @@ fn parse_put(args: &[String]) -> Result<Command, CommandError> {
                     message: format!("invalid META JSON: {e}"),
                 })?;
             metadata = Some(json);
+        } else if upper == "TTL" {
+            i += 1;
+            if i >= args.len() {
+                return Err(CommandError::BadArg {
+                    message: "TTL requires a duration in milliseconds".into(),
+                });
+            }
+            ttl_ms = Some(args[i].parse::<u64>().map_err(|_| CommandError::BadArg {
+                message: "TTL must be a non-negative integer (milliseconds)".into(),
+            })?);
         } else {
             return Err(CommandError::BadArg {
                 message: format!("unexpected argument: {}", args[i]),
@@ -151,6 +166,7 @@ fn parse_put(args: &[String]) -> Result<Command, CommandError> {
         key,
         value,
         metadata,
+        ttl_ms,
     })
 }
 
@@ -205,6 +221,121 @@ fn parse_delete(args: &[String]) -> Result<Command, CommandError> {
     Ok(Command::Delete {
         ns: args[0].clone(),
         key: args[1].as_bytes().to_vec(),
+    })
+}
+
+// ── PUTIF <ns> <key> <value> EXPECT <version> [META <json>] ─────────
+
+fn parse_put_if(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 5, "PUTIF")?;
+    let ns = args[0].clone();
+    let key = args[1].as_bytes().to_vec();
+    let value = args[2].as_bytes().to_vec();
+
+    let mut expected_version: Option<u64> = None;
+    let mut metadata: Option<serde_json::Value> = None;
+    let mut i = 3;
+
+    while i < args.len() {
+        match args[i].to_ascii_uppercase().as_str() {
+            "EXPECT" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(CommandError::BadArg {
+                        message: "EXPECT requires a version".into(),
+                    });
+                }
+                expected_version =
+                    Some(args[i].parse::<u64>().map_err(|_| CommandError::BadArg {
+                        message: "EXPECT must be a non-negative integer".into(),
+                    })?);
+            }
+            "META" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(CommandError::BadArg {
+                        message: "META requires a JSON value".into(),
+                    });
+                }
+                let json: serde_json::Value =
+                    serde_json::from_str(&args[i]).map_err(|e| CommandError::BadArg {
+                        message: format!("invalid META JSON: {e}"),
+                    })?;
+                metadata = Some(json);
+            }
+            _ => {
+                return Err(CommandError::BadArg {
+                    message: format!("unexpected argument: {}", args[i]),
+                });
+            }
+        }
+        i += 1;
+    }
+
+    let expected_version = expected_version.ok_or(CommandError::BadArg {
+        message: "PUTIF requires EXPECT <version>".into(),
+    })?;
+
+    Ok(Command::PutIf {
+        ns,
+        key,
+        value,
+        metadata,
+        expected_version,
+    })
+}
+
+// ── DELPREFIX <ns> <prefix> ──────────────────────────────────────────
+
+fn parse_del_prefix(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 2, "DELPREFIX")?;
+    let ns = args[0].clone();
+    let prefix = args[1].as_bytes().to_vec();
+
+    // Empty prefix is also rejected at the trait impl layer, but we
+    // reject at parse time too so clients get a clear error before the
+    // request hits the ACL pipeline.
+    if prefix.is_empty() {
+        return Err(CommandError::BadArg {
+            message: "DELPREFIX: empty prefix not allowed; use NAMESPACE DROP for full-namespace teardown".into(),
+        });
+    }
+
+    if args.len() > 2 {
+        return Err(CommandError::BadArg {
+            message: format!("unexpected argument: {}", args[2]),
+        });
+    }
+
+    Ok(Command::DelPrefix { ns, prefix })
+}
+
+// ── DELIF <ns> <key> EXPECT <version> ───────────────────────────────
+
+fn parse_del_if(args: &[String]) -> Result<Command, CommandError> {
+    require_args(args, 4, "DELIF")?;
+    let ns = args[0].clone();
+    let key = args[1].as_bytes().to_vec();
+
+    if !args[2].eq_ignore_ascii_case("EXPECT") {
+        return Err(CommandError::BadArg {
+            message: format!("DELIF: expected EXPECT keyword, got {}", args[2]),
+        });
+    }
+    let expected_version = args[3].parse::<u64>().map_err(|_| CommandError::BadArg {
+        message: "EXPECT must be a non-negative integer".into(),
+    })?;
+
+    if args.len() > 4 {
+        return Err(CommandError::BadArg {
+            message: format!("unexpected argument: {}", args[4]),
+        });
+    }
+
+    Ok(Command::DelIf {
+        ns,
+        key,
+        expected_version,
     })
 }
 
@@ -677,11 +808,13 @@ mod tests {
                 key,
                 value,
                 metadata,
+                ttl_ms,
             } => {
                 assert_eq!(ns, "ns");
                 assert_eq!(key, b"key");
                 assert_eq!(value, b"value");
                 assert!(metadata.is_none());
+                assert!(ttl_ms.is_none());
             }
             _ => panic!("expected Put"),
         }

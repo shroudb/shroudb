@@ -155,7 +155,8 @@ impl<S: Store> CommandDispatcher<S> {
                 key,
                 value,
                 metadata,
-            } => handlers::put::handle(&self.store, &ns, &key, &value, metadata).await,
+                ttl_ms,
+            } => handlers::put::handle(&self.store, &ns, &key, &value, metadata, ttl_ms).await,
 
             Command::Get {
                 ns,
@@ -165,6 +166,27 @@ impl<S: Store> CommandDispatcher<S> {
             } => handlers::get::handle(&self.store, &ns, &key, version, meta).await,
 
             Command::Delete { ns, key } => handlers::delete::handle(&self.store, &ns, &key).await,
+
+            Command::PutIf {
+                ns,
+                key,
+                value,
+                metadata,
+                expected_version,
+            } => {
+                handlers::put_if::handle(&self.store, &ns, &key, &value, metadata, expected_version)
+                    .await
+            }
+
+            Command::DelIf {
+                ns,
+                key,
+                expected_version,
+            } => handlers::del_if::handle(&self.store, &ns, &key, expected_version).await,
+
+            Command::DelPrefix { ns, prefix } => {
+                handlers::del_prefix::handle(&self.store, &ns, &prefix).await
+            }
 
             Command::List {
                 ns,

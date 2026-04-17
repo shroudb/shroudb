@@ -155,6 +155,45 @@ pub fn spawn_all<S: Store + 'static>(
         }));
     }
 
+    // TTL sweeper. Uses the engine-configured interval (default 1s).
+    // Pops expired entries from the heap — or falls back to a full-index
+    // scan if the heap has saturated — and emits standard EntryDeleted
+    // WAL entries for each expired key. See `StorageEngine::sweep_tick`.
+    {
+        let engine = Arc::clone(&engine);
+        let mut rx = shutdown_rx.clone();
+        let interval_ms = engine.ttl_sweep_interval_ms();
+        handles.push(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = rx.changed() => {
+                        if *rx.borrow() { break; }
+                    }
+                    _ = interval.tick() => {
+                        let now_ms = match std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                        {
+                            Ok(d) => d.as_millis() as u64,
+                            Err(_) => continue,
+                        };
+                        match engine.sweep_tick(now_ms).await {
+                            Ok(swept) if swept > 0 => {
+                                tracing::debug!(swept, "ttl sweeper tombstoned expired entries");
+                                metrics::counter!("shroudb_ttl_swept_total").increment(swept);
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                tracing::error!(error = %e, "ttl sweeper failed");
+                            }
+                        }
+                    }
+                }
+            }
+        }));
+    }
+
     handles
 }
 

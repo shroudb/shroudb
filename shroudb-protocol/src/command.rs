@@ -14,6 +14,10 @@ pub enum Command {
         key: Vec<u8>,
         value: Vec<u8>,
         metadata: Option<serde_json::Value>,
+        /// Optional TTL in milliseconds. When `Some(n)`, the entry is
+        /// auto-deleted at or after the server's wall clock reaches
+        /// `now_ms + n`. Absent means no expiry.
+        ttl_ms: Option<u64>,
     },
     Get {
         ns: String,
@@ -24,6 +28,34 @@ pub enum Command {
     Delete {
         ns: String,
         key: Vec<u8>,
+    },
+    /// `PUTIF <ns> <key> <value> EXPECT <version> [META <json>]`.
+    /// Writes only if the key's current active version matches
+    /// `expected_version`. On mismatch the handler returns
+    /// `CommandError::VersionConflict { current }`.
+    PutIf {
+        ns: String,
+        key: Vec<u8>,
+        value: Vec<u8>,
+        metadata: Option<serde_json::Value>,
+        expected_version: u64,
+    },
+    /// `DELIF <ns> <key> EXPECT <version>`.
+    /// Writes a tombstone only if the key's current active version
+    /// matches `expected_version`.
+    DelIf {
+        ns: String,
+        key: Vec<u8>,
+        expected_version: u64,
+    },
+    /// `DELPREFIX <ns> <prefix>`.
+    /// Tombstones all active keys matching `prefix`. Empty prefix is
+    /// rejected at parse time. Returns `{deleted: u64}` on success or
+    /// `-PREFIXTOOLARGE matched=<n> limit=<m>` if the per-call cap is
+    /// exceeded (no keys deleted).
+    DelPrefix {
+        ns: String,
+        prefix: Vec<u8>,
     },
     List {
         ns: String,
@@ -139,7 +171,11 @@ impl Command {
             },
 
             // Write — per-namespace
-            Command::Put { ns, .. } | Command::Delete { ns, .. } => AclRequirement::Namespace {
+            Command::Put { ns, .. }
+            | Command::Delete { ns, .. }
+            | Command::PutIf { ns, .. }
+            | Command::DelIf { ns, .. }
+            | Command::DelPrefix { ns, .. } => AclRequirement::Namespace {
                 ns: ns.clone(),
                 scope: Scope::Write,
                 tenant_override: None,
@@ -165,6 +201,9 @@ impl Command {
             Command::Put { .. } => "PUT",
             Command::Get { .. } => "GET",
             Command::Delete { .. } => "DELETE",
+            Command::PutIf { .. } => "PUTIF",
+            Command::DelIf { .. } => "DELIF",
+            Command::DelPrefix { .. } => "DELPREFIX",
             Command::List { .. } => "LIST",
             Command::Versions { .. } => "VERSIONS",
             Command::NamespaceCreate { .. } => "NAMESPACE CREATE",
