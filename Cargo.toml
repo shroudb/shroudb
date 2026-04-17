@@ -18,8 +18,8 @@ publish = ["shroudb"]
 
 [workspace.dependencies]
 # Internal crates
-shroudb-protocol = { path = "shroudb-protocol", version = "1.0.7", registry = "shroudb" }
-shroudb-client = { path = "shroudb-client", version = "1.0.7", registry = "shroudb" }
+shroudb-protocol = { path = "shroudb-protocol", version = "1.1.0", registry = "shroudb" }
+shroudb-client = { path = "shroudb-client", version = "1.1.0", registry = "shroudb" }
 
 # Commons crates (shroudb registry)
 shroudb-acl = { version = "0.2.0", registry = "shroudb" }
