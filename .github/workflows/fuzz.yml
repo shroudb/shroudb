@@ -29,6 +29,8 @@ jobs:
           - acl_check
           - meta_schema_validate
     steps:
+      - name: Ensure cargo on PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: actions/checkout@v5
 
       - name: Configure registry
@@ -52,11 +54,6 @@ jobs:
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked --quiet
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: fuzz
-          cache-on-failure: true
 
       - name: Restore corpus cache
         uses: actions/cache@v4
