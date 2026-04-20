@@ -13,6 +13,8 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_REGISTRIES_SHROUDB_CRATESIO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
   CARGO_REGISTRIES_SHROUDB_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+  PATH: /home/nlucas/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  CARGO_TARGET_DIR: /opt/cargo-cache
 
 jobs:
   fuzz:
@@ -29,8 +31,6 @@ jobs:
           - acl_check
           - meta_schema_validate
     steps:
-      - name: Ensure cargo on PATH
-        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: actions/checkout@v5
 
       - name: Configure registry
