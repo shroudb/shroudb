@@ -14,7 +14,6 @@ env:
   CARGO_REGISTRIES_SHROUDB_CRATESIO_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
   CARGO_REGISTRIES_SHROUDB_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
   PATH: /home/nlucas/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-  CARGO_TARGET_DIR: /opt/cargo-cache
 
 jobs:
   fuzz:
